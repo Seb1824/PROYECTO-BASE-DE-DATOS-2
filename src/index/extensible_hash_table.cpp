@@ -54,6 +54,10 @@ bool ExtensibleHashTable::GetValue(KeyType key, ValueType *result) {
 }
 
 bool ExtensibleHashTable::Insert(KeyType key, ValueType value) {
+  ValueType existing;
+  if (GetValue(key, &existing)) {
+    return false; 
+  }
   uint32_t bucket_idx = GetBucketIndex(key);
 
   Page *dir_page = bpm_->FetchPage(directory_page_id_);
@@ -119,4 +123,4 @@ bool ExtensibleHashTable::Insert(KeyType key, ValueType value) {
   return Insert(key, value);
 }
 
-} // namespace minisgbd
+} 
