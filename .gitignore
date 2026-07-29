@@ -1,1 +1,18 @@
+# Compiladores y CMake
+build/
+bin/
+*.exe
+*.obj
+*.o
+*.lib
+*.ilk
+*.pdb
 
+# Bases de datos de prueba generadas localmente
+*.db
+*.log
+
+# Archivos del sistema y de editores
+.DS_Store
+Thumbs.db
+.vscode/

@@ -165,6 +165,6 @@ int DiskManager::get_num_pages() const {
   return static_cast<int>(next_page_id_);
 }
 
-}  // namespace minisgbd
-```
+}  
+
 
