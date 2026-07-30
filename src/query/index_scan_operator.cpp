@@ -2,40 +2,36 @@
 
 namespace minisgbd {
 
-IndexScanOperator::IndexScanOperator(ExtensibleHashTable *hash_index, BufferPoolManager *bpm, int search_key)
-    : hash_index_(hash_index), bpm_(bpm), search_key_(search_key) {}
+IndexScanOperator::IndexScanOperator(ExtensibleHashTable *hash_index,
+                                     int search_key)
+    : hash_index_(hash_index), search_key_(search_key) {}
 
 void IndexScanOperator::Open() {
-    cursor_ = 0;
-    results_.clear();
-    
-    RID found_rid;
-    if (hash_index_->GetValue(search_key_, &found_rid.page_id)) {
-        results_.push_back(found_rid);
-    }
-    
-    initialized_ = true;
+  cursor_ = 0;
+  results_.clear();
+
+  int found_value = 0;
+  if (hash_index_->GetValue(search_key_, &found_value)) {
+    results_.push_back(Tuple{search_key_, found_value});
+  }
+
+  initialized_ = true;
 }
 
-bool IndexScanOperator::Next(RID *rid, int *value) {
-    if (!initialized_) {
-        return false;
-    }
-
-    if (cursor_ < results_.size()) {
-        *rid = results_[cursor_];
-        *value = search_key_;
-        cursor_++;
-        return true;
-    }
-
+bool IndexScanOperator::Next(Tuple *tuple) {
+  if (!initialized_ || tuple == nullptr || cursor_ >= results_.size()) {
     return false;
+  }
+
+  *tuple = results_[cursor_];
+  ++cursor_;
+  return true;
 }
 
 void IndexScanOperator::Close() {
-    initialized_ = false;
-    results_.clear();
-    cursor_ = 0;
+  initialized_ = false;
+  results_.clear();
+  cursor_ = 0;
 }
 
-} 
+}  // namespace minisgbd

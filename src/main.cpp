@@ -69,16 +69,15 @@ int main() {
     int clave_consulta = 104;
     std::cout << "   Lanzando operador IndexScan para la clave: " << clave_consulta << "\n";
     
-    IndexScanOperator scan_op(&hash_index, &bpm, clave_consulta);
+    IndexScanOperator scan_op(&hash_index, clave_consulta);
     scan_op.Open();
 
-    RID rid_resultado;
-    int val_resultado = 0;
-    bool hay_datos = scan_op.Next(&rid_resultado, &val_resultado);
+    Tuple resultado;
+    bool hay_datos = scan_op.Next(&resultado);
 
     if (hay_datos) {
-        std::cout << "   [VOLCANO NEXT()] Registro recuperado -> Clave: " << val_resultado 
-                  << " | PageID: " << rid_resultado.page_id << "\n";
+        std::cout << "   [VOLCANO NEXT()] Registro recuperado -> Clave: "
+                  << resultado.key << " | PageID: " << resultado.value << "\n";
     } else {
         std::cout << "   [VOLCANO NEXT()] Fin del flujo (Sin resultados).\n";
     }
