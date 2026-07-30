@@ -16,6 +16,7 @@ set(ENGINE_SOURCES
     src/index/extensible_hash_table.cpp
     src/query/index_scan_operator.cpp
     src/query/parser.cpp
+    src/query/seq_scan_operator.cpp
 )
 
 # 2. Definir el Ejecutable Principal (Tu script de validación / sandbox)
@@ -30,10 +31,17 @@ add_executable(test_parser
     src/query/parser.cpp
 )
 
-# 5. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
+# 5. Definir las pruebas aisladas del escaneo secuencial
+add_executable(test_seq_scan
+    tests/test_seq_scan.cpp
+    src/query/seq_scan_operator.cpp
+)
+
+# 6. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
 add_executable(benchmark_load src/benchmark/benchmark_load.cpp ${ENGINE_SOURCES})
 
 # Habilitar pruebas con CTest
 enable_testing()
 add_test(NAME HashIndexTest COMMAND test_hash)
 add_test(NAME ParserTest COMMAND test_parser)
+add_test(NAME SeqScanTest COMMAND test_seq_scan)
