@@ -15,6 +15,8 @@ enum class QueryPlanType {
   kFilteredSeqScan,
   kIndexScan,
   kInsert,
+  kUpdate,
+  kDelete,
 };
 
 class QueryExecutor {
@@ -27,8 +29,11 @@ class QueryExecutor {
   std::vector<Tuple> Execute(const std::string &sql);
   std::vector<Tuple> Execute(const SelectQuery &query);
   std::vector<Tuple> Execute(const InsertQuery &query);
+  std::vector<Tuple> Execute(const UpdateQuery &query);
+  std::vector<Tuple> Execute(const DeleteQuery &query);
 
   QueryPlanType GetLastPlanType() const;
+  const std::vector<std::string> &GetLastOutputColumns() const;
 
  private:
   std::string table_name_;
@@ -36,6 +41,7 @@ class QueryExecutor {
   TableHeap *table_heap_{nullptr};
   ExtensibleHashTable *hash_index_;
   QueryPlanType last_plan_type_{QueryPlanType::kSeqScan};
+  std::vector<std::string> last_output_columns_{"key", "value"};
 };
 
 }  // namespace minisgbd

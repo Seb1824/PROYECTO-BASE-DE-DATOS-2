@@ -1,5 +1,6 @@
 #include <exception>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -10,7 +11,6 @@
 #include "query/cli.h"
 #include "query/query_executor.h"
 #include "query/query_profiler.h"
-#include "query/seq_scan_operator.h"
 #include "query/tuple.h"
 #include "storage/disk_manager.h"
 #include "storage/table_heap.h"
@@ -48,31 +48,28 @@ int main() {
           Tuple{105, 525},
       };
 
-      if (table_heap.GetTupleCount() == 0) {
+      if (table_heap.GetFirstPageId() == INVALID_PAGE_ID) {
         if (!hash_index.IsNewlyCreated()) {
           throw std::runtime_error(
               "El catalogo contiene un indice sin tabla asociada.");
         }
 
         for (const Tuple &tuple : seed_tuples) {
-          if (!table_heap.Insert(tuple.key, tuple.value) ||
-              !hash_index.Insert(tuple.key, tuple.value)) {
+          const std::optional<RID> rid =
+              table_heap.InsertTuple(tuple.key, tuple.value);
+          if (!rid.has_value() ||
+              !hash_index.Insert(tuple.key, rid->Encode())) {
             throw std::runtime_error(
                 "No se pudo inicializar la tabla persistente.");
           }
         }
       } else if (hash_index.IsNewlyCreated()) {
-        SeqScanOperator scan(&table_heap);
-        scan.Open();
-        Tuple tuple;
-        while (scan.Next(&tuple)) {
-          if (!hash_index.Insert(tuple.key, tuple.value)) {
-            scan.Close();
+        for (const LocatedRecord &record : table_heap.ReadAll()) {
+          if (!hash_index.Insert(record.key, record.rid.Encode())) {
             throw std::runtime_error(
                 "No se pudo reconstruir el indice persistente.");
           }
         }
-        scan.Close();
       }
 
       QueryExecutor executor("registros", &table_heap, &hash_index);

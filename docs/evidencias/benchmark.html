@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Evidencia benchmark</title>
+  <style>
+    body { margin: 0; padding: 30px 38px 45px; background: #f8fafc;
+      color: #0f172a; font-family: Arial, sans-serif; }
+    h1 { margin: 0 0 7px; font-size: 25px; }
+    .meta { color: #475569; margin-bottom: 24px; }
+    img { display: block; width: 100%; max-width: 1200px; background: white;
+      border: 1px solid #cbd5e1; }
+    table { margin-top: 24px; border-collapse: collapse; background: white;
+      font-size: 14px; }
+    th, td { padding: 9px 13px; border: 1px solid #cbd5e1; text-align: right; }
+    th { background: #e2e8f0; } td:first-child { font-weight: bold; }
+    .note { max-width: 1150px; margin-top: 22px; padding: 16px 18px;
+      border-left: 5px solid #2563eb; background: #eff6ff; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <h1>Benchmark reproducible del motor actual</h1>
+  <div class="meta">5 repeticiones · 100 consultas · Buffer Pool de 10 frames · media ± desviación estándar</div>
+  <img src="../comparacion_busqueda.svg" alt="Comparación de búsqueda e I/O">
+  <table>
+    <tr><th>N</th><th>IndexScan (ms)</th><th>Filter + SeqScan (ms)</th><th>Aceleración</th><th>I/O índice</th><th>I/O secuencial</th></tr>
+    <tr><td>1,000</td><td>0.436 ± 0.143</td><td>0.935 ± 0.152</td><td>2.14x</td><td>5</td><td>2</td></tr>
+    <tr><td>5,000</td><td>0.726 ± 0.138</td><td>4.076 ± 1.964</td><td>5.62x</td><td>75</td><td>20</td></tr>
+    <tr><td>10,000</td><td>1.087 ± 0.304</td><td>19.644 ± 4.363</td><td>18.08x</td><td>101</td><td>2,000</td></tr>
+    <tr><td>50,000</td><td>1.724 ± 0.940</td><td>58.961 ± 3.183</td><td>34.20x</td><td>196</td><td>9,800</td></tr>
+    <tr><td>100,000</td><td>1.594 ± 0.367</td><td>128.342 ± 23.612</td><td>80.50x</td><td>200</td><td>19,600</td></tr>
+  </table>
+  <div class="note"><strong>Resultado:</strong> cuando la tabla supera el Buffer Pool, el escaneo secuencial pierde localidad y su hit ratio cae a cero. En 100,000 registros, el índice reduce el costo de I/O 98 veces y el tiempo 80.5 veces, a cambio de aproximadamente 2.30 veces más espacio en disco.</div>
+</body>
+</html>

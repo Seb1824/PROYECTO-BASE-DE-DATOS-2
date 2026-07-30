@@ -82,6 +82,21 @@ uint32_t ExtensibleHashTable::GetBucketIndex(KeyType key) const {
   return bucket_idx;
 }
 
+page_id_t ExtensibleHashTable::GetBucketPageId(
+    uint32_t bucket_index) const {
+  Page *dir_page = bpm_->FetchPage(directory_page_id_);
+  if (dir_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo cargar el directorio del indice.");
+  }
+  const auto *dir =
+      reinterpret_cast<const HashDirectoryPage *>(dir_page->get_data());
+  const page_id_t bucket_page_id =
+      dir->GetBucketPageId(bucket_index);
+  bpm_->UnpinPage(directory_page_id_, false);
+  return bucket_page_id;
+}
+
 bool ExtensibleHashTable::GetValue(KeyType key, ValueType *result) {
   if (result == nullptr) {
     return false;
@@ -89,15 +104,7 @@ bool ExtensibleHashTable::GetValue(KeyType key, ValueType *result) {
 
   uint32_t bucket_idx = GetBucketIndex(key);
 
-  Page *dir_page = bpm_->FetchPage(directory_page_id_);
-  if (dir_page == nullptr) {
-    throw std::runtime_error(
-        "No se pudo cargar el directorio del indice.");
-  }
-  auto *dir =
-      reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
-  page_id_t bucket_page_id = dir->GetBucketPageId(bucket_idx);
-  bpm_->UnpinPage(directory_page_id_, false);
+  const page_id_t bucket_page_id = GetBucketPageId(bucket_idx);
 
   Page *bucket_page = bpm_->FetchPage(bucket_page_id);
   if (bucket_page == nullptr) {
@@ -111,6 +118,36 @@ bool ExtensibleHashTable::GetValue(KeyType key, ValueType *result) {
   bpm_->UnpinPage(bucket_page_id, false);
 
   return found;
+}
+
+bool ExtensibleHashTable::UpdateValue(KeyType key, ValueType value) {
+  const uint32_t bucket_index = GetBucketIndex(key);
+  const page_id_t bucket_page_id = GetBucketPageId(bucket_index);
+  Page *bucket_page = bpm_->FetchPage(bucket_page_id);
+  if (bucket_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo cargar el bucket para actualizar.");
+  }
+  auto *bucket =
+      reinterpret_cast<HashBucketPage *>(bucket_page->get_data());
+  const bool updated = bucket->UpdateValue(key, value);
+  bpm_->UnpinPage(bucket_page_id, updated);
+  return updated;
+}
+
+bool ExtensibleHashTable::Remove(KeyType key) {
+  const uint32_t bucket_index = GetBucketIndex(key);
+  const page_id_t bucket_page_id = GetBucketPageId(bucket_index);
+  Page *bucket_page = bpm_->FetchPage(bucket_page_id);
+  if (bucket_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo cargar el bucket para eliminar.");
+  }
+  auto *bucket =
+      reinterpret_cast<HashBucketPage *>(bucket_page->get_data());
+  const bool removed = bucket->Remove(key);
+  bpm_->UnpinPage(bucket_page_id, removed);
+  return removed;
 }
 
 bool ExtensibleHashTable::Insert(KeyType key, ValueType value) {

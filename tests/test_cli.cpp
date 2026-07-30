@@ -89,6 +89,10 @@ void TestInteractiveSession() {
                  "El comando help debe mostrar ayuda.");
   ExpectContains(session, "INSERT INTO registros VALUES",
                  "La ayuda debe documentar INSERT.");
+  ExpectContains(session, "UPDATE registros SET",
+                 "La ayuda debe documentar UPDATE.");
+  ExpectContains(session, "DELETE FROM registros",
+                 "La ayuda debe documentar DELETE.");
   ExpectContains(session, "Sesion finalizada.",
                  "El comando exit debe cerrar la sesion.");
 }
@@ -108,7 +112,11 @@ void TestPersistentInsertSession() {
 
     std::istringstream input(
         "INSERT INTO registros VALUES (106, 530);\n"
-        "SELECT * FROM registros WHERE id = 106;\n"
+        "SELECT value FROM registros WHERE id = 106;\n"
+        "UPDATE registros SET value = 535 WHERE id = 106;\n"
+        "SELECT key FROM registros WHERE value >= 535;\n"
+        "INSERT INTO registros VALUES (107, 540);\n"
+        "DELETE FROM registros WHERE id = 107;\n"
         "INSERT INTO registros VALUES (106, 999);\n"
         "exit\n");
     std::ostringstream output;
@@ -122,6 +130,14 @@ void TestPersistentInsertSession() {
                    "La CLI debe informar el plan de insercion.");
     ExpectContains(session, "Plan: IndexScan",
                    "La fila insertada debe consultarse por el indice.");
+    ExpectContains(session, "Filas actualizadas: 1",
+                   "La CLI debe confirmar UPDATE.");
+    ExpectContains(session, "Plan: Update",
+                   "La CLI debe mostrar el plan UPDATE.");
+    ExpectContains(session, "Filas eliminadas: 1",
+                   "La CLI debe confirmar DELETE.");
+    ExpectContains(session, "Plan: Delete",
+                   "La CLI debe mostrar el plan DELETE.");
     ExpectContains(session, "ya existe",
                    "La CLI debe explicar el rechazo de un duplicado.");
     Expect(table_heap.GetTupleCount() == 1,
@@ -139,8 +155,12 @@ void TestPersistentInsertSession() {
 
     const std::vector<Tuple> rows =
         executor.Execute("SELECT * FROM registros WHERE id = 106;");
-    Expect(rows.size() == 1 && rows[0].value == 530,
-           "El INSERT de la CLI debe persistir despues de reiniciar.");
+    Expect(rows.size() == 1 && rows[0].value == 535,
+           "INSERT y UPDATE de la CLI deben persistir al reiniciar.");
+    Expect(executor.Execute(
+               "SELECT * FROM registros WHERE id = 107;")
+               .empty(),
+           "DELETE de la CLI debe persistir al reiniciar.");
   }
 
   std::remove(db_file.c_str());
@@ -155,6 +175,22 @@ void TestEndOfInput() {
 
   Expect(RunCli(input, output, &profiler) == 0,
          "El fin de entrada debe cerrar la CLI correctamente.");
+}
+
+void TestUtf8BomOnFirstCommand() {
+  const std::vector<Tuple> tuples = {Tuple{1, 100}};
+  QueryExecutor executor("registros", tuples);
+  QueryProfiler profiler(&executor);
+  std::istringstream input(
+      "\xEF\xBB\xBF"
+      "SELECT * FROM registros;\n"
+      "exit\n");
+  std::ostringstream output;
+
+  Expect(RunCli(input, output, &profiler) == 0,
+         "La CLI debe aceptar una entrada UTF-8 con BOM.");
+  ExpectContains(output.str(), "Filas: 1",
+                 "El BOM no debe invalidar la primera consulta.");
 }
 
 void TestNullExecutor() {
@@ -177,6 +213,7 @@ int main() {
   TestInteractiveSession();
   TestPersistentInsertSession();
   TestEndOfInput();
+  TestUtf8BomOnFirstCommand();
   TestNullExecutor();
 
   if (failures != 0) {

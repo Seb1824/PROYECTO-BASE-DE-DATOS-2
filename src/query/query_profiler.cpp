@@ -67,6 +67,7 @@ ProfiledQueryResult QueryProfiler::Execute(const std::string &sql) {
 
   ProfiledQueryResult result;
   result.rows = std::move(rows);
+  result.output_columns = executor_->GetLastOutputColumns();
   result.plan_type = executor_->GetLastPlanType();
   result.metrics = metrics;
   return result;

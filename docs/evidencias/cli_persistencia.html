@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Evidencia CLI - Persistencia</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0b1120; color: #d1fae5;
+      font-family: Consolas, "Cascadia Mono", monospace; }
+    header { padding: 24px 32px; background: #111827;
+      border-bottom: 1px solid #334155; }
+    h1 { margin: 0 0 8px; color: #f8fafc; font: 700 22px Arial; }
+    .meta { color: #94a3b8; font: 14px Arial; }
+    main { padding: 28px 34px 42px; max-width: 1180px; }
+    .block { margin: 0 0 20px; padding: 18px 20px; background: #111827;
+      border: 1px solid #263449; border-radius: 9px; line-height: 1.48;
+      white-space: pre-wrap; font-size: 14px; }
+    .prompt { color: #67e8f9; } .plan { color: #fbbf24; }
+    .disk { color: #fda4af; } .ok { color: #86efac; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mini-SGBD — persistencia después del reinicio</h1>
+    <div class="meta">Segunda ejecución del proceso sobre el mismo mini_sgbd.db</div>
+  </header>
+  <main>
+    <div class="block"><span class="ok">[INFO] Tabla 'registros' inicializada con 6 filas persistentes.
+[INFO] Índice hash recuperado desde el catálogo.</span></div>
+    <div class="block"><span class="prompt">mini-sgbd&gt; SELECT * FROM registros WHERE id = 106;</span>
+key         value
+------------------------
+106         535
+Filas: 1
+<span class="plan">Plan: IndexScan</span>
+Buffer hits: 1
+Buffer misses: 3
+Lecturas de disco: 3
+<span class="disk">Costo I/O: 3 operaciones de página</span></div>
+    <div class="block"><span class="prompt">mini-sgbd&gt; SELECT * FROM registros WHERE id = 107;</span>
+107         540
+<span class="plan">Plan: IndexScan</span>
+
+<span class="prompt">mini-sgbd&gt; SELECT * FROM registros WHERE id = 104;</span>
+Sin resultados.
+<span class="plan">Plan: IndexScan</span></div>
+    <div class="block"><span class="prompt">mini-sgbd&gt; SELECT key FROM registros WHERE value &gt;= 525;</span>
+key
+------------
+105
+106
+107
+Filas: 3
+<span class="plan">Plan: Filter + SeqScan</span></div>
+    <div class="block"><span class="disk">mini_sgbd.db = 16,384 bytes = 4 páginas físicas de 4 KB</span></div>
+  </main>
+</body>
+</html>

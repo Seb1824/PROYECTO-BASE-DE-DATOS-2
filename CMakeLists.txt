@@ -20,6 +20,7 @@ set(ENGINE_SOURCES
     src/query/filter_operator.cpp
     src/query/index_scan_operator.cpp
     src/query/parser.cpp
+    src/query/projection_operator.cpp
     src/query/query_executor.cpp
     src/query/query_profiler.cpp
     src/query/seq_scan_operator.cpp
@@ -91,6 +92,12 @@ add_executable(test_index_stress
     ${ENGINE_SOURCES}
 )
 
+# 14. Pruebas del operador de proyeccion Volcano
+add_executable(test_projection
+    tests/test_projection.cpp
+    ${ENGINE_SOURCES}
+)
+
 # Habilitar pruebas con CTest
 enable_testing()
 add_test(NAME HashIndexTest COMMAND test_hash)
@@ -103,3 +110,4 @@ add_test(NAME QueryProfilerTest COMMAND test_query_profiler)
 add_test(NAME BufferPoolTest COMMAND test_buffer_pool)
 add_test(NAME PersistenceTest COMMAND test_persistence)
 add_test(NAME IndexStressTest COMMAND test_index_stress)
+add_test(NAME ProjectionTest COMMAND test_projection)

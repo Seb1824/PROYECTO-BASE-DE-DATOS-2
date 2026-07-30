@@ -34,12 +34,15 @@ void CatalogManager::EnsureCatalog() {
         "No se pudo leer la pagina de catalogo.");
   }
 
-  const auto *catalog =
-      reinterpret_cast<const CatalogPage *>(page->get_data());
+  auto *catalog = reinterpret_cast<CatalogPage *>(page->get_data());
   const bool is_valid = catalog->IsValid();
-  buffer_pool_->UnpinPage(CATALOG_PAGE_ID, false);
+  const bool is_legacy = catalog->IsLegacyVersion();
+  if (is_legacy) {
+    catalog->MigrateLegacyIndexToRid();
+  }
+  buffer_pool_->UnpinPage(CATALOG_PAGE_ID, is_legacy);
 
-  if (!is_valid) {
+  if (!is_valid && !is_legacy) {
     throw std::runtime_error(
         "El archivo no contiene un catalogo Mini-SGBD valido.");
   }

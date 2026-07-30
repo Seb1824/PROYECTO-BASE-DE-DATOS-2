@@ -54,10 +54,13 @@ bool SeqScanOperator::Next(Tuple *tuple) {
         reinterpret_cast<const TablePage *>(current_page_->get_data());
 
     if (cursor_ < table_page->GetSize()) {
-      const TableRecord record =
-          table_page->GetRecord(static_cast<uint32_t>(cursor_));
-      *tuple = Tuple{record.key, record.value};
+      const uint32_t slot = static_cast<uint32_t>(cursor_);
       ++cursor_;
+      if (table_page->IsDeleted(slot)) {
+        continue;
+      }
+      const TableRecord record = table_page->GetRecord(slot);
+      *tuple = Tuple{record.key, record.value};
       return true;
     }
 

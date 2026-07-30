@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 
 #include "storage/disk_manager.h"
@@ -7,6 +8,7 @@
 #include "buffer/buffer_pool_manager.h"
 #include "index/extensible_hash_table.h"
 #include "query/index_scan_operator.h"
+#include "storage/table_heap.h"
 
 using namespace minisgbd;
 
@@ -21,16 +23,17 @@ void Expect(bool condition, const std::string &message) {
     }
 }
 
-void TestIndexScanOperator(ExtensibleHashTable *hash_index) {
+void TestIndexScanOperator(ExtensibleHashTable *hash_index,
+                           TableHeap *table_heap) {
     std::cout << "[Test] Probando ciclo de vida de IndexScanOperator..."
               << std::endl;
 
     Tuple tuple;
-    IndexScanOperator unopened_scan(hash_index, 7);
+    IndexScanOperator unopened_scan(hash_index, table_heap, 7);
     Expect(!unopened_scan.Next(&tuple),
            "Next() antes de Open() debe retornar false.");
 
-    IndexScanOperator found_scan(hash_index, 7);
+    IndexScanOperator found_scan(hash_index, table_heap, 7);
     found_scan.Open();
 
     Expect(found_scan.Next(&tuple),
@@ -44,7 +47,7 @@ void TestIndexScanOperator(ExtensibleHashTable *hash_index) {
     Expect(!found_scan.Next(&tuple),
            "Next() despues de Close() debe retornar false.");
 
-    IndexScanOperator missing_scan(hash_index, 999);
+    IndexScanOperator missing_scan(hash_index, table_heap, 999);
     missing_scan.Open();
     Expect(!missing_scan.Next(&tuple),
            "Una clave inexistente no debe producir resultados.");
@@ -62,6 +65,7 @@ void RunTests() {
     size_t pool_size = 10;
     CARReplacer replacer(pool_size); // Política CAR implementada por Kari
     BufferPoolManager bpm(pool_size, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
     
     // El índice hash solo recibe el BufferPoolManager
     ExtensibleHashTable hash_index(&bpm);
@@ -69,21 +73,30 @@ void RunTests() {
     // 2. Probar inserciones en el Índice Hash Extensible
     std::cout << "[Test] Insertando claves en el indice hash..." << std::endl;
     for (int i = 1; i <= 10; ++i) {
-        page_id_t dummy_page_id = i * 100; // Simulando ID de página
-        bool inserted = hash_index.Insert(i, dummy_page_id);
+        const std::optional<RID> rid =
+            table_heap.InsertTuple(i, i * 100);
+        bool inserted =
+            rid.has_value() && hash_index.Insert(i, rid->Encode());
         Expect(inserted, "La insercion de una clave nueva debe ser exitosa.");
     }
 
     // 3. Probar búsquedas directas
     std::cout << "[Test] Verificando busquedas directas..." << std::endl;
-    page_id_t found_page = 0;
-    bool found = hash_index.GetValue(5, &found_page);
+    int encoded_rid = 0;
+    bool found = hash_index.GetValue(5, &encoded_rid);
     Expect(found, "La busqueda directa debe encontrar la clave 5.");
-    Expect(found_page == 500, "La clave 5 debe apuntar al valor 500.");
-    std::cout << " > Clave 5 encontrada en pagina: " << found_page << std::endl;
+    int found_key = 0;
+    int found_value = 0;
+    const RID rid = RID::Decode(encoded_rid);
+    Expect(table_heap.GetRecord(rid, &found_key, &found_value),
+           "El RID debe apuntar a una fila fisica.");
+    Expect(found_key == 5 && found_value == 500,
+           "La clave 5 debe recuperar el valor 500 desde TableHeap.");
+    std::cout << " > Clave 5 encontrada en RID: "
+              << rid.page_id << ":" << rid.slot << std::endl;
 
     // 4. Probar el Operador Volcano (IndexScanOperator)
-    TestIndexScanOperator(&hash_index);
+    TestIndexScanOperator(&hash_index, &table_heap);
 
     // Limpieza final del archivo de prueba
     std::remove(db_file.c_str());

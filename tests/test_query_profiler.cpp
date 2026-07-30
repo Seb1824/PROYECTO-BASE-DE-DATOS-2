@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "query/query_profiler.h"
 #include "query/tuple.h"
 #include "storage/disk_manager.h"
+#include "storage/table_heap.h"
 
 using namespace minisgbd;
 
@@ -69,18 +71,21 @@ void TestProfiledIndexAndSequentialQueries() {
   std::remove(db_file.c_str());
 
   {
-    const std::vector<Tuple> tuples = BuildTuples();
     DiskManager disk_manager(db_file);
     CARReplacer replacer(10);
     BufferPoolManager bpm(10, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
     ExtensibleHashTable hash_index(&bpm);
 
-    for (const Tuple &tuple : tuples) {
-      Expect(hash_index.Insert(tuple.key, tuple.value),
+    for (const Tuple &tuple : BuildTuples()) {
+      const std::optional<RID> rid =
+          table_heap.InsertTuple(tuple.key, tuple.value);
+      Expect(rid.has_value() &&
+                 hash_index.Insert(tuple.key, rid->Encode()),
              "Debe inicializar el indice para el profiler.");
     }
 
-    QueryExecutor executor("registros", tuples, &hash_index);
+    QueryExecutor executor("registros", &table_heap, &hash_index);
     QueryProfiler profiler(&executor, &bpm, &disk_manager);
 
     const ProfiledQueryResult index_result =
@@ -109,11 +114,10 @@ void TestProfiledIndexAndSequentialQueries() {
            "La consulta filtrada debe devolver dos filas.");
     Expect(sequential_result.plan_type == QueryPlanType::kFilteredSeqScan,
            "La consulta por value debe registrar escaneo filtrado.");
-    Expect(sequential_result.metrics.buffer_hits == 0 &&
-               sequential_result.metrics.buffer_misses == 0,
-           "El scan actual en memoria no debe heredar métricas anteriores.");
+    Expect(sequential_result.metrics.buffer_hits > 0,
+           "El scan fisico debe registrar accesos al Buffer Pool.");
     Expect(sequential_result.metrics.io_operations == 0,
-           "El scan actual en memoria no debe reportar I/O de disco.");
+           "Las paginas calientes no deben producir I/O adicional.");
   }
 
   std::remove(db_file.c_str());

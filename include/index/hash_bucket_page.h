@@ -47,6 +47,29 @@ class HashBucketPage {
     return true;
   }
 
+  bool UpdateValue(KeyType key, ValueType value) {
+    for (int i = 0; i < size_; ++i) {
+      if (array_[i].first == key) {
+        array_[i].second = value;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool Remove(KeyType key) {
+    for (int i = 0; i < size_; ++i) {
+      if (array_[i].first == key) {
+        for (int next = i + 1; next < size_; ++next) {
+          array_[next - 1] = array_[next];
+        }
+        --size_;
+        return true;
+      }
+    }
+    return false;
+  }
+
  private:
   int local_depth_;
   int size_;

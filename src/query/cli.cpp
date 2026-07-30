@@ -26,7 +26,14 @@ std::string Trim(const std::string &text) {
       text.rbegin(), text.rend(),
       [](unsigned char character) { return std::isspace(character); });
 
-  return std::string(first, last.base());
+  std::string trimmed(first, last.base());
+  if (trimmed.size() >= 3 &&
+      static_cast<unsigned char>(trimmed[0]) == 0xEF &&
+      static_cast<unsigned char>(trimmed[1]) == 0xBB &&
+      static_cast<unsigned char>(trimmed[2]) == 0xBF) {
+    trimmed.erase(0, 3);
+  }
+  return trimmed;
 }
 
 std::string ToLower(std::string text) {
@@ -47,6 +54,10 @@ const char *PlanName(QueryPlanType plan_type) {
       return "IndexScan";
     case QueryPlanType::kInsert:
       return "Insert";
+    case QueryPlanType::kUpdate:
+      return "Update";
+    case QueryPlanType::kDelete:
+      return "Delete";
   }
 
   return "Desconocido";
@@ -56,27 +67,46 @@ void PrintHelp(std::ostream &output) {
   output << "Comandos disponibles:\n"
          << "  SELECT * FROM registros;\n"
          << "  SELECT * FROM registros WHERE id = 101;\n"
+         << "  SELECT key FROM registros WHERE value >= 505;\n"
          << "  SELECT * FROM registros WHERE value = 505;\n"
          << "  INSERT INTO registros VALUES (106, 530);\n"
+         << "  UPDATE registros SET value = 535 WHERE id = 106;\n"
+         << "  DELETE FROM registros WHERE id = 106;\n"
          << "  help  Muestra esta ayuda.\n"
          << "  exit  Cierra la CLI.\n";
 }
 
 void PrintResults(std::ostream &output, const ProfiledQueryResult &result) {
   if (result.plan_type == QueryPlanType::kInsert) {
-    const Tuple &tuple = result.rows.front();
-    output << "Registro insertado: key=" << tuple.key
-           << ", value=" << tuple.value << '\n';
+    if (!result.rows.empty()) {
+      const Tuple &tuple = result.rows.front();
+      output << "Registro insertado: key=" << tuple.key
+             << ", value=" << tuple.value << '\n';
+    }
     output << "Filas afectadas: " << result.rows.size() << '\n';
+  } else if (result.plan_type == QueryPlanType::kUpdate) {
+    output << "Filas actualizadas: " << result.rows.size() << '\n';
+  } else if (result.plan_type == QueryPlanType::kDelete) {
+    output << "Filas eliminadas: " << result.rows.size() << '\n';
   } else if (result.rows.empty()) {
     output << "Sin resultados.\n";
+    output << "Filas: 0\n";
   } else {
-    output << std::left << std::setw(12) << "key"
-           << "value\n";
-    output << "--------------------\n";
+    for (const std::string &column : result.output_columns) {
+      output << std::left << std::setw(12) << column;
+    }
+    output << '\n';
+    output << std::string(result.output_columns.size() * 12, '-') << '\n';
 
     for (const Tuple &tuple : result.rows) {
-      output << std::left << std::setw(12) << tuple.key << tuple.value << '\n';
+      for (const std::string &column : result.output_columns) {
+        if (column == "key") {
+          output << std::left << std::setw(12) << tuple.key;
+        } else {
+          output << std::left << std::setw(12) << tuple.value;
+        }
+      }
+      output << '\n';
     }
 
     output << "Filas: " << result.rows.size() << '\n';

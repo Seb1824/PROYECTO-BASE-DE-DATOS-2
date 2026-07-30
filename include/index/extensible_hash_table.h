@@ -12,6 +12,8 @@ class ExtensibleHashTable {
 
   bool GetValue(KeyType key, ValueType *result);
   bool Insert(KeyType key, ValueType value);
+  bool UpdateValue(KeyType key, ValueType value);
+  bool Remove(KeyType key);
 
   page_id_t GetDirectoryPageId() const;
   bool IsNewlyCreated() const;
@@ -19,6 +21,7 @@ class ExtensibleHashTable {
  private:
   uint32_t Hash(KeyType key) const;
   uint32_t GetBucketIndex(KeyType key) const;
+  page_id_t GetBucketPageId(uint32_t bucket_index) const;
   
   BufferPoolManager *bpm_;
   page_id_t directory_page_id_{INVALID_PAGE_ID};

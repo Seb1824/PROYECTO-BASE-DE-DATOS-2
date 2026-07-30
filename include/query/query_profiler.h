@@ -23,6 +23,7 @@ struct QueryMetrics {
 
 struct ProfiledQueryResult {
   std::vector<Tuple> rows;
+  std::vector<std::string> output_columns{"key", "value"};
   QueryPlanType plan_type{QueryPlanType::kSeqScan};
   QueryMetrics metrics;
 };

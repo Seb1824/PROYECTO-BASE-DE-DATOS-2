@@ -1,5 +1,7 @@
 #include <cstdio>
+#include <cstring>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -10,6 +12,7 @@
 #include "query/query_profiler.h"
 #include "query/tuple.h"
 #include "storage/disk_manager.h"
+#include "storage/catalog_page.h"
 #include "storage/table_heap.h"
 #include "storage/table_page.h"
 
@@ -45,9 +48,12 @@ void TestPhysicalTableAndPersistentIndex() {
            "El indice debe crearse en una base nueva.");
 
     for (int key = 1; key <= kTupleCount; ++key) {
-      Expect(table_heap.Insert(key, key * 10),
+      const std::optional<RID> rid =
+          table_heap.InsertTuple(key, key * 10);
+      Expect(rid.has_value(),
              "Debe insertar cada registro en paginas fisicas.");
-      Expect(hash_index.Insert(key, key * 10),
+      Expect(rid.has_value() &&
+                 hash_index.Insert(key, rid->Encode()),
              "Debe insertar cada registro en el indice.");
     }
 
@@ -129,12 +135,69 @@ void TestPhysicalTableAndPersistentIndex() {
   std::remove(db_file.c_str());
 }
 
+void TestLegacyCatalogMigration() {
+  const std::string db_file = "test_legacy_catalog.db";
+  std::remove(db_file.c_str());
+
+  {
+    DiskManager disk_manager(db_file);
+    CARReplacer replacer(6);
+    BufferPoolManager bpm(6, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
+    ExtensibleHashTable legacy_index(&bpm);
+    for (int key = 1; key <= 3; ++key) {
+      const std::optional<RID> rid =
+          table_heap.InsertTuple(key, key * 100);
+      Expect(rid.has_value() &&
+                 legacy_index.Insert(key, key * 100),
+             "Debe preparar el formato de indice anterior.");
+    }
+    bpm.FlushAllPages();
+  }
+
+  {
+    DiskManager disk_manager(db_file);
+    char page[PAGE_SIZE];
+    disk_manager.read_page(CATALOG_PAGE_ID, page);
+    const uint32_t legacy_version = LEGACY_CATALOG_VERSION;
+    std::memcpy(page + sizeof(uint32_t), &legacy_version,
+                sizeof(legacy_version));
+    disk_manager.write_page(CATALOG_PAGE_ID, page);
+  }
+
+  {
+    DiskManager disk_manager(db_file);
+    CARReplacer replacer(6);
+    BufferPoolManager bpm(6, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
+    ExtensibleHashTable rebuilt_index(&bpm);
+
+    Expect(rebuilt_index.IsNewlyCreated(),
+           "La migracion debe invalidar solo el indice antiguo.");
+    Expect(table_heap.GetTupleCount() == 3,
+           "La migracion debe conservar TableHeap.");
+    for (const LocatedRecord &record : table_heap.ReadAll()) {
+      Expect(rebuilt_index.Insert(record.key, record.rid.Encode()),
+             "Debe reconstruir key -> RID desde TableHeap.");
+    }
+
+    QueryExecutor executor("registros", &table_heap, &rebuilt_index);
+    const std::vector<Tuple> rows =
+        executor.Execute("SELECT * FROM registros WHERE id = 2;");
+    Expect(rows.size() == 1 && rows[0].value == 200,
+           "El indice migrado debe recuperar la fila fisica.");
+  }
+
+  std::remove(db_file.c_str());
+}
+
 }  // namespace
 
 int main() {
   std::cout << "=== PRUEBAS DE PERSISTENCIA FISICA ===\n";
 
   TestPhysicalTableAndPersistentIndex();
+  TestLegacyCatalogMigration();
 
   if (failures != 0) {
     std::cerr << failures << " prueba(s) fallaron.\n";
