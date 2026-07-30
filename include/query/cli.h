@@ -2,11 +2,11 @@
 
 #include <iosfwd>
 
-#include "query/query_executor.h"
+#include "query/query_profiler.h"
 
 namespace minisgbd {
 
 int RunCli(std::istream &input, std::ostream &output,
-           QueryExecutor *executor);
+           QueryProfiler *profiler);
 
 }  // namespace minisgbd

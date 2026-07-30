@@ -108,6 +108,8 @@ void DiskManager::read_page(page_id_t page_id, char *page_data) {
     std::memset(page_data + read_count, 0,
                 PAGE_SIZE - static_cast<size_t>(read_count));
   }
+
+  ++read_count_;
 }
 
 void DiskManager::write_page(page_id_t page_id, const char *page_data) {
@@ -135,6 +137,8 @@ void DiskManager::write_page(page_id_t page_id, const char *page_data) {
   if (page_id >= next_page_id_) {
     next_page_id_ = page_id + 1;
   }
+
+  ++write_count_;
 }
 
 page_id_t DiskManager::allocate_page() {
@@ -156,6 +160,7 @@ page_id_t DiskManager::allocate_page() {
   }
 
   db_io_.flush();
+  ++write_count_;
 
   return new_page_id;
 }
@@ -165,6 +170,16 @@ int DiskManager::get_num_pages() const {
   return static_cast<int>(next_page_id_);
 }
 
-}  
+uint64_t DiskManager::GetReadCount() const {
+  std::lock_guard<std::mutex> lock(db_io_latch_);
+  return read_count_;
+}
+
+uint64_t DiskManager::GetWriteCount() const {
+  std::lock_guard<std::mutex> lock(db_io_latch_);
+  return write_count_;
+}
+
+}  // namespace minisgbd
 
 

@@ -19,6 +19,7 @@ set(ENGINE_SOURCES
     src/query/index_scan_operator.cpp
     src/query/parser.cpp
     src/query/query_executor.cpp
+    src/query/query_profiler.cpp
     src/query/seq_scan_operator.cpp
 )
 
@@ -59,7 +60,13 @@ add_executable(test_cli
     ${ENGINE_SOURCES}
 )
 
-# 9. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
+# 9. Definir las pruebas del profiler de consultas
+add_executable(test_query_profiler
+    tests/test_query_profiler.cpp
+    ${ENGINE_SOURCES}
+)
+
+# 10. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
 add_executable(benchmark_load src/benchmark/benchmark_load.cpp ${ENGINE_SOURCES})
 
 # Habilitar pruebas con CTest
@@ -70,3 +77,4 @@ add_test(NAME SeqScanTest COMMAND test_seq_scan)
 add_test(NAME FilterTest COMMAND test_filter)
 add_test(NAME QueryExecutorTest COMMAND test_query_executor)
 add_test(NAME CliTest COMMAND test_cli)
+add_test(NAME QueryProfilerTest COMMAND test_query_profiler)

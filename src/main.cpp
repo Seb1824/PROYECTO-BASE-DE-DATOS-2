@@ -10,6 +10,7 @@
 #include "index/extensible_hash_table.h"
 #include "query/cli.h"
 #include "query/query_executor.h"
+#include "query/query_profiler.h"
 #include "query/tuple.h"
 #include "storage/disk_manager.h"
 
@@ -54,13 +55,14 @@ int main() {
       }
 
       QueryExecutor executor("registros", tuples, &hash_index);
+      QueryProfiler profiler(&executor, &bpm, &disk_manager);
 
       PrintHeader();
       std::cout << "[INFO] Tabla 'registros' inicializada con "
                 << tuples.size() << " filas.\n";
       std::cout << "[INFO] Indice hash disponible para las columnas key/id.\n";
 
-      exit_code = RunCli(std::cin, std::cout, &executor);
+      exit_code = RunCli(std::cin, std::cout, &profiler);
       bpm.FlushAllPages();
     }
   } catch (const std::exception &error) {

@@ -6,9 +6,11 @@
 
 #include "query/cli.h"
 #include "query/query_executor.h"
+#include "query/query_profiler.h"
 #include "query/tuple.h"
 
 using minisgbd::QueryExecutor;
+using minisgbd::QueryProfiler;
 using minisgbd::RunCli;
 using minisgbd::Tuple;
 
@@ -35,6 +37,7 @@ void TestInteractiveSession() {
       Tuple{3, 200},
   };
   QueryExecutor executor("registros", tuples);
+  QueryProfiler profiler(&executor);
 
   std::istringstream input(
       "\n"
@@ -45,7 +48,7 @@ void TestInteractiveSession() {
       "exit\n");
   std::ostringstream output;
 
-  const int result = RunCli(input, output, &executor);
+  const int result = RunCli(input, output, &profiler);
   const std::string session = output.str();
 
   Expect(result == 0, "La CLI debe finalizar con codigo cero.");
@@ -59,6 +62,16 @@ void TestInteractiveSession() {
                  "El filtro debe informar dos coincidencias.");
   ExpectContains(session, "Plan: Filter + SeqScan",
                  "Debe mostrar el plan de filtrado.");
+  ExpectContains(session, "Tiempo:",
+                 "Debe mostrar el tiempo de ejecucion.");
+  ExpectContains(session, "Buffer hits:",
+                 "Debe mostrar los hits del buffer.");
+  ExpectContains(session, "Buffer misses:",
+                 "Debe mostrar los misses del buffer.");
+  ExpectContains(session, "Hit ratio:",
+                 "Debe mostrar el hit ratio.");
+  ExpectContains(session, "Costo I/O:",
+                 "Debe mostrar el costo de I/O.");
   ExpectContains(session, "[ERROR]",
                  "Una consulta invalida debe mostrar un error.");
   ExpectContains(session, "Comandos disponibles:",
@@ -70,10 +83,11 @@ void TestInteractiveSession() {
 void TestEndOfInput() {
   const std::vector<Tuple> tuples;
   QueryExecutor executor("registros", tuples);
+  QueryProfiler profiler(&executor);
   std::istringstream input;
   std::ostringstream output;
 
-  Expect(RunCli(input, output, &executor) == 0,
+  Expect(RunCli(input, output, &profiler) == 0,
          "El fin de entrada debe cerrar la CLI correctamente.");
 }
 

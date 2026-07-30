@@ -32,6 +32,9 @@ class DiskManager {
 
   int get_num_pages() const;
 
+  uint64_t GetReadCount() const;
+  uint64_t GetWriteCount() const;
+
  private:
   void ensure_capacity(page_id_t page_id);
 
@@ -39,6 +42,8 @@ class DiskManager {
   std::fstream db_io_;
   mutable std::mutex db_io_latch_;
   page_id_t next_page_id_;
+  uint64_t read_count_{0};
+  uint64_t write_count_{0};
 };
 
-}
+}  // namespace minisgbd

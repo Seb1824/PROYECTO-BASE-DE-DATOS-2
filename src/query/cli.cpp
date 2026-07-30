@@ -59,31 +59,41 @@ void PrintHelp(std::ostream &output) {
          << "  exit  Cierra la CLI.\n";
 }
 
-void PrintResults(std::ostream &output, const std::vector<Tuple> &results,
-                  QueryPlanType plan_type) {
-  if (results.empty()) {
+void PrintResults(std::ostream &output, const ProfiledQueryResult &result) {
+  if (result.rows.empty()) {
     output << "Sin resultados.\n";
   } else {
     output << std::left << std::setw(12) << "key"
            << "value\n";
     output << "--------------------\n";
 
-    for (const Tuple &tuple : results) {
+    for (const Tuple &tuple : result.rows) {
       output << std::left << std::setw(12) << tuple.key << tuple.value << '\n';
     }
   }
 
-  output << "Filas: " << results.size() << '\n';
-  output << "Plan: " << PlanName(plan_type) << '\n';
+  output << "Filas: " << result.rows.size() << '\n';
+  output << "Plan: " << PlanName(result.plan_type) << '\n';
+  output << std::fixed << std::setprecision(3);
+  output << "Tiempo: " << result.metrics.elapsed_ms << " ms\n";
+  output << "Buffer hits: " << result.metrics.buffer_hits << '\n';
+  output << "Buffer misses: " << result.metrics.buffer_misses << '\n';
+  output << std::setprecision(2);
+  output << "Hit ratio: " << result.metrics.buffer_hit_ratio * 100.0 << " %\n";
+  output << "Lecturas de disco: " << result.metrics.disk_reads << '\n';
+  output << "Escrituras de disco: " << result.metrics.disk_writes << '\n';
+  output << "Costo I/O: " << result.metrics.io_operations
+         << " operaciones de pagina\n";
+  output << std::defaultfloat;
 }
 
 }  // namespace
 
 int RunCli(std::istream &input, std::ostream &output,
-           QueryExecutor *executor) {
-  if (executor == nullptr) {
+           QueryProfiler *profiler) {
+  if (profiler == nullptr) {
     throw std::invalid_argument(
-        "RunCli requiere un QueryExecutor valido.");
+        "RunCli requiere un QueryProfiler valido.");
   }
 
   output << "Escribe una consulta SQL, 'help' o 'exit'.\n";
@@ -114,8 +124,8 @@ int RunCli(std::istream &input, std::ostream &output,
     }
 
     try {
-      const std::vector<Tuple> results = executor->Execute(command);
-      PrintResults(output, results, executor->GetLastPlanType());
+      const ProfiledQueryResult result = profiler->Execute(command);
+      PrintResults(output, result);
     } catch (const std::exception &error) {
       output << "[ERROR] " << error.what() << '\n';
     }
