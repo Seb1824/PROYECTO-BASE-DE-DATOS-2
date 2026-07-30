@@ -1,5 +1,7 @@
 #include "buffer/car_replacer.h"
+
 #include <algorithm>
+#include <utility>
 
 namespace minisgbd {
 
@@ -16,10 +18,12 @@ bool CARReplacer::RecordAccess(page_id_t page_id, frame_id_t *frame_id) {
     }
     frames_[page_it->second].reference_bit = true;
     hits_++;
+    NotifyLocked("HIT", page_id, page_it->second, p_);
     return true;
   }
 
   misses_++;
+  const double previous_p = p_;
 
   // 2. Si hubo un fallo (Miss), buscamos en el historial B1
   auto it_b1 = std::find(b1_.begin(), b1_.end(), page_id);
@@ -29,6 +33,7 @@ bool CARReplacer::RecordAccess(page_id_t page_id, frame_id_t *frame_id) {
     double step = (b1_size >= b2_size) ? 1.0 : static_cast<double>(b2_size) / b1_size;
     p_ = std::min(static_cast<double>(capacity_), p_ + step);
     b1_.erase(it_b1);
+    NotifyLocked("MISS_B1", page_id, INVALID_FRAME_ID, previous_p);
     return false;
   }
 
@@ -40,9 +45,11 @@ bool CARReplacer::RecordAccess(page_id_t page_id, frame_id_t *frame_id) {
     double step = (b2_size >= b1_size) ? 1.0 : static_cast<double>(b1_size) / b2_size;
     p_ = std::max(0.0, p_ - step);
     b2_.erase(it_b2);
+    NotifyLocked("MISS_B2", page_id, INVALID_FRAME_ID, previous_p);
     return false;
   }
 
+  NotifyLocked("MISS_COLD", page_id, INVALID_FRAME_ID, previous_p);
   return false;
 }
 
@@ -55,6 +62,7 @@ void CARReplacer::RecordInsertion(page_id_t page_id, frame_id_t frame_id) {
   frames_[frame_id].list = ListTag::kT1;
   t1_.push_back(frame_id);
   page_to_frame_[page_id] = frame_id;
+  NotifyLocked("INSERT_T1", page_id, frame_id, p_);
 }
 
 bool CARReplacer::Victim(frame_id_t *frame_id) {
@@ -93,18 +101,22 @@ bool CARReplacer::Victim(frame_id_t *frame_id) {
 
       if (!entry.reference_bit) {
         if (entry.evictable) {
+          const page_id_t victim_page_id = entry.page_id;
           *frame_id = f;
           PushGhost(&b1_, entry.page_id);
           page_to_frame_.erase(entry.page_id);
           frames_.erase(f);
           --evictable_count_;
+          NotifyLocked("EVICT_T1_B1", victim_page_id, f, p_);
           return true;
         }
         t1_.push_back(f);
       } else {
+        const page_id_t promoted_page_id = entry.page_id;
         entry.reference_bit = false;
         entry.list = ListTag::kT2;
         t2_.push_back(f);
+        NotifyLocked("PROMOTE_T1_T2", promoted_page_id, f, p_);
       }
     } else {
       frame_id_t f = t2_.front();
@@ -113,17 +125,21 @@ bool CARReplacer::Victim(frame_id_t *frame_id) {
 
       if (!entry.reference_bit) {
         if (entry.evictable) {
+          const page_id_t victim_page_id = entry.page_id;
           *frame_id = f;
           PushGhost(&b2_, entry.page_id);
           page_to_frame_.erase(entry.page_id);
           frames_.erase(f);
           --evictable_count_;
+          NotifyLocked("EVICT_T2_B2", victim_page_id, f, p_);
           return true;
         }
         t2_.push_back(f);
       } else {
+        const page_id_t second_chance_page_id = entry.page_id;
         entry.reference_bit = false;
         t2_.push_back(f);
+        NotifyLocked("SECOND_CHANCE_T2", second_chance_page_id, f, p_);
       }
     }
   }
@@ -188,6 +204,63 @@ double CARReplacer::GetHitRate() const {
   return (hits_ + misses_ == 0)
              ? 0.0
              : static_cast<double>(hits_) / (hits_ + misses_);
+}
+
+CARStateSnapshot CARReplacer::GetSnapshot() const {
+  std::lock_guard<std::mutex> lock(latch_);
+  return SnapshotLocked();
+}
+
+void CARReplacer::SetEventObserver(EventObserver observer) {
+  std::lock_guard<std::mutex> lock(latch_);
+  observer_ = std::move(observer);
+}
+
+void CARReplacer::ClearEventObserver() {
+  std::lock_guard<std::mutex> lock(latch_);
+  observer_ = nullptr;
+}
+
+CARStateSnapshot CARReplacer::SnapshotLocked() const {
+  CARStateSnapshot snapshot;
+  snapshot.capacity = capacity_;
+  snapshot.evictable_count = evictable_count_;
+  snapshot.target_p = p_;
+  snapshot.hits = hits_;
+  snapshot.misses = misses_;
+
+  auto append_resident_pages =
+      [this](const std::list<frame_id_t> &source,
+             std::vector<page_id_t> *destination) {
+        destination->reserve(source.size());
+        for (frame_id_t frame_id : source) {
+          auto it = frames_.find(frame_id);
+          if (it != frames_.end()) {
+            destination->push_back(it->second.page_id);
+          }
+        }
+      };
+
+  append_resident_pages(t1_, &snapshot.t1);
+  append_resident_pages(t2_, &snapshot.t2);
+  snapshot.b1.assign(b1_.begin(), b1_.end());
+  snapshot.b2.assign(b2_.begin(), b2_.end());
+  return snapshot;
+}
+
+void CARReplacer::NotifyLocked(const std::string &type, page_id_t page_id,
+                               frame_id_t frame_id, double previous_p) {
+  if (!observer_) {
+    return;
+  }
+
+  CAREvent event;
+  event.type = type;
+  event.page_id = page_id;
+  event.frame_id = frame_id;
+  event.previous_p = previous_p;
+  event.state = SnapshotLocked();
+  observer_(event);
 }
 
 }  // namespace minisgbd

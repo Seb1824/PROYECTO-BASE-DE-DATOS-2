@@ -34,11 +34,27 @@ using minisgbd::DiskManager;
 using minisgbd::ExtensibleHashTable;
 using minisgbd::ProfiledQueryResult;
 using minisgbd::Parser;
+using minisgbd::PersonRecord;
 using minisgbd::QueryExecutor;
 using minisgbd::QueryPlanType;
 using minisgbd::QueryProfiler;
 using minisgbd::RID;
 using minisgbd::TableHeap;
+
+PersonRecord BuildBenchmarkPerson(int id) {
+  static const std::vector<std::string> cities{
+      "Lima", "Arequipa", "Cusco", "Trujillo", "Piura"};
+  static const std::vector<std::string> professions{
+      "Ingenieria", "Medicina", "Arquitectura",
+      "Derecho", "Analisis de Datos"};
+  return PersonRecord{
+      id,
+      "Persona " + std::to_string(id),
+      cities[static_cast<std::size_t>(id) % cities.size()],
+      professions[static_cast<std::size_t>(id) %
+                  professions.size()],
+  };
+}
 
 struct BenchResult {
   int n{0};
@@ -119,9 +135,9 @@ double BuildPhysicalDatabase(const std::string &db_file,
 
   const auto start = Clock::now();
   for (int key : keys) {
-    const int value = key * 10;
+    const PersonRecord person = BuildBenchmarkPerson(key);
     const std::optional<RID> rid =
-        table_heap.InsertTuple(key, value);
+        table_heap.InsertTuple(person);
     if (!rid.has_value()) {
       throw std::runtime_error(
           "No se pudo cargar un registro en TableHeap.");
@@ -169,12 +185,12 @@ BenchResult RunSearchBenchmark(int n, const std::vector<int> &keys,
       hash_index = std::make_unique<ExtensibleHashTable>(&bpm);
     }
 
-    QueryExecutor executor("registros", &table_heap, hash_index.get());
+    QueryExecutor executor("personas", &table_heap, hash_index.get());
     QueryProfiler profiler(&executor, &bpm, &disk_manager);
 
     for (int key : search_keys) {
       const ProfiledQueryResult query_result = profiler.Execute(
-          "SELECT * FROM registros WHERE id = " + std::to_string(key) + ";");
+          "SELECT * FROM personas WHERE id = " + std::to_string(key) + ";");
 
       const QueryPlanType expected_plan =
           with_index ? QueryPlanType::kIndexScan
@@ -184,8 +200,7 @@ BenchResult RunSearchBenchmark(int n, const std::vector<int> &keys,
             "QueryExecutor selecciono un plan inesperado.");
       }
       if (query_result.rows.size() != 1 ||
-          query_result.rows.front().key != key ||
-          query_result.rows.front().value != key * 10) {
+          query_result.rows.front() != BuildBenchmarkPerson(key)) {
         throw std::runtime_error(
             "El benchmark no recupero la fila fisica esperada.");
       }
@@ -539,7 +554,7 @@ int main(int argc, char *argv[]) {
         argc >= 5 ? ParsePositiveArgument(argv[4], "repeticiones") : 5;
     constexpr std::size_t pool_size = 10;
     (void)Parser::ParseStatement(
-        "SELECT * FROM registros WHERE id = 1;");
+        "SELECT * FROM personas WHERE id = 1;");
 
     if (output_path.has_parent_path()) {
       std::filesystem::create_directories(output_path.parent_path());

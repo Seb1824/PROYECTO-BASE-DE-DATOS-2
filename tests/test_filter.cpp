@@ -24,19 +24,19 @@ void Expect(bool condition, const std::string &message) {
 
 void TestSingleMatch() {
   const std::vector<Tuple> tuples = {
-      Tuple{1, 100},
-      Tuple{2, 200},
-      Tuple{3, 300},
+      Tuple{1, "Ana", "Lima", "Ingeniera"},
+      Tuple{2, "Bruno", "Cusco", "Medico"},
+      Tuple{3, "Carla", "Piura", "Abogada"},
   };
 
   SeqScanOperator scan(tuples);
   FilterOperator filter(&scan,
-                        [](const Tuple &tuple) { return tuple.key == 2; });
+                        [](const Tuple &tuple) { return tuple.id == 2; });
   Tuple output;
 
   filter.Open();
-  Expect(filter.Next(&output), "El filtro debe encontrar la clave 2.");
-  Expect(output.key == 2 && output.value == 200,
+  Expect(filter.Next(&output), "El filtro debe encontrar el id 2.");
+  Expect(output == tuples[1],
          "El filtro debe devolver el Tuple completo.");
   Expect(!filter.Next(&output),
          "No debe producir resultados adicionales para una coincidencia.");
@@ -45,44 +45,46 @@ void TestSingleMatch() {
 
 void TestMultipleMatches() {
   const std::vector<Tuple> tuples = {
-      Tuple{1, 100},
-      Tuple{2, 200},
-      Tuple{3, 200},
-      Tuple{4, 400},
+      Tuple{1, "Ana", "Lima", "Ingeniera"},
+      Tuple{2, "Bruno", "Arequipa", "Medico"},
+      Tuple{3, "Carla", "Arequipa", "Abogada"},
+      Tuple{4, "Diego", "Cusco", "Arquitecto"},
   };
 
   SeqScanOperator scan(tuples);
   FilterOperator filter(
-      &scan, [](const Tuple &tuple) { return tuple.value >= 200; });
+      &scan, [](const Tuple &tuple) {
+        return tuple.ciudad == "Arequipa";
+      });
   Tuple output;
-  const std::vector<int> expected_keys = {2, 3, 4};
+  const std::vector<int> expected_ids = {2, 3};
   std::size_t result_index = 0;
 
   filter.Open();
   while (filter.Next(&output)) {
-    Expect(result_index < expected_keys.size(),
+    Expect(result_index < expected_ids.size(),
            "El filtro produjo mas resultados de los esperados.");
-    if (result_index < expected_keys.size()) {
-      Expect(output.key == expected_keys[result_index],
+    if (result_index < expected_ids.size()) {
+      Expect(output.id == expected_ids[result_index],
              "El filtro debe conservar el orden del operador hijo.");
     }
     ++result_index;
   }
   filter.Close();
 
-  Expect(result_index == expected_keys.size(),
+  Expect(result_index == expected_ids.size(),
          "El filtro debe producir todas las coincidencias.");
 }
 
 void TestNoMatches() {
   const std::vector<Tuple> tuples = {
-      Tuple{1, 100},
-      Tuple{2, 200},
+      Tuple{1, "Ana", "Lima", "Ingeniera"},
+      Tuple{2, "Bruno", "Cusco", "Medico"},
   };
 
   SeqScanOperator scan(tuples);
   FilterOperator filter(
-      &scan, [](const Tuple &tuple) { return tuple.key == 999; });
+      &scan, [](const Tuple &tuple) { return tuple.id == 999; });
   Tuple output;
 
   filter.Open();
@@ -93,13 +95,15 @@ void TestNoMatches() {
 
 void TestLifecycleAndReopen() {
   const std::vector<Tuple> tuples = {
-      Tuple{10, 1000},
-      Tuple{20, 2000},
+      Tuple{10, "Ana", "Lima", "Ingeniera"},
+      Tuple{20, "Luis", "Cusco", "Medico"},
   };
 
   SeqScanOperator scan(tuples);
   FilterOperator filter(
-      &scan, [](const Tuple &tuple) { return tuple.value >= 1000; });
+      &scan, [](const Tuple &tuple) {
+        return !tuple.profesion.empty();
+      });
   Tuple output;
 
   Expect(!filter.Next(&output),
@@ -109,7 +113,7 @@ void TestLifecycleAndReopen() {
   Expect(!filter.Next(nullptr), "Next(nullptr) debe retornar false.");
   Expect(filter.Next(&output),
          "Un puntero nulo no debe consumir el siguiente resultado.");
-  Expect(output.key == 10, "La primera ejecucion debe iniciar en la clave 10.");
+  Expect(output.id == 10, "La primera ejecucion debe iniciar en el id 10.");
   filter.Close();
 
   Expect(!filter.Next(&output),
@@ -117,14 +121,14 @@ void TestLifecycleAndReopen() {
 
   filter.Open();
   Expect(filter.Next(&output), "Open() debe permitir volver a ejecutar.");
-  Expect(output.key == 10, "Open() debe reiniciar toda la cadena Volcano.");
+  Expect(output.id == 10, "Open() debe reiniciar toda la cadena Volcano.");
   filter.Close();
 }
 
 void TestInvalidConfiguration() {
   try {
     FilterOperator filter(
-        nullptr, [](const Tuple &tuple) { return tuple.key == 1; });
+        nullptr, [](const Tuple &tuple) { return tuple.id == 1; });
     Expect(false, "Debe rechazar un operador hijo nulo.");
   } catch (const std::invalid_argument &) {
     // Resultado esperado.

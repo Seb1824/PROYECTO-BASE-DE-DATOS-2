@@ -2,14 +2,15 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "query/parser.h"
 
-using minisgbd::Parser;
 using minisgbd::ComparisonOperator;
 using minisgbd::DeleteQuery;
 using minisgbd::InsertQuery;
+using minisgbd::Parser;
 using minisgbd::QueryStatement;
 using minisgbd::SelectQuery;
 using minisgbd::UpdateQuery;
@@ -37,60 +38,41 @@ void ExpectInvalid(const std::string &sql) {
   }
 }
 
-void TestSelectWithoutWhere() {
-  SelectQuery query = Parser::Parse("SELECT * FROM registros;");
+void TestSelects() {
+  const SelectQuery all = Parser::Parse("SELECT * FROM personas;");
+  Expect(all.table == "personas" && all.select_all,
+         "Debe reconocer SELECT * sobre personas.");
+  Expect(!all.where.has_value(),
+         "SELECT simple no debe crear un WHERE.");
 
-  Expect(query.table == "registros", "Debe reconocer el nombre de la tabla.");
-  Expect(query.select_all, "SELECT * debe seleccionar todas las columnas.");
-  Expect(!query.where.has_value(), "La consulta no debe tener condicion WHERE.");
-}
-
-void TestSelectWithWhere() {
-  SelectQuery query =
-      Parser::Parse("SELECT * FROM registros WHERE id = 25;");
-
-  Expect(query.table == "registros", "Debe reconocer la tabla con WHERE.");
-  Expect(query.where.has_value(), "Debe reconocer la condicion WHERE.");
-
-  if (query.where.has_value()) {
-    Expect(query.where->column == "id", "Debe reconocer la columna de WHERE.");
-    Expect(query.where->value == 25, "Debe reconocer el valor entero de WHERE.");
-  }
-}
-
-void TestCaseWhitespaceAndSignedValue() {
-  SelectQuery query =
-      Parser::Parse("  select  *  from Inventario where stock = -10  ");
-
-  Expect(query.table == "Inventario",
-         "Debe conservar el nombre original de la tabla.");
-  Expect(query.where.has_value(), "Debe aceptar palabras clave en minusculas.");
-
-  if (query.where.has_value()) {
-    Expect(query.where->column == "stock",
-           "Debe reconocer la columna con espacios adicionales.");
-    Expect(query.where->value == -10, "Debe aceptar enteros con signo.");
-  }
-}
-
-void TestProjectionAndComparisons() {
-  QueryStatement statement = Parser::ParseStatement(
-      "SELECT value, id FROM registros WHERE value >= 500;");
-  Expect(std::holds_alternative<SelectQuery>(statement),
-         "Debe reconocer SELECT con proyeccion.");
-  if (std::holds_alternative<SelectQuery>(statement)) {
-    const SelectQuery &query = std::get<SelectQuery>(statement);
-    Expect(!query.select_all && query.columns.size() == 2,
-           "Debe conservar las columnas proyectadas.");
-    Expect(query.columns.size() == 2 && query.columns[0] == "value" &&
-               query.columns[1] == "id",
-           "Debe conservar el orden de la proyeccion.");
-    Expect(query.where.has_value() &&
-               query.where->comparison ==
-                   ComparisonOperator::kGreaterOrEqual,
-           "Debe reconocer el comparador mayor o igual.");
+  const SelectQuery filtered = Parser::Parse(
+      "SELECT nombre, profesion FROM personas "
+      "WHERE ciudad = 'Arequipa';");
+  Expect(!filtered.select_all && filtered.columns.size() == 2,
+         "Debe reconocer una proyeccion de texto.");
+  Expect(filtered.columns[0] == "nombre" &&
+             filtered.columns[1] == "profesion",
+         "Debe conservar el orden de las columnas.");
+  Expect(filtered.where.has_value() &&
+             filtered.where->column == "ciudad",
+         "Debe reconocer el filtro por ciudad.");
+  if (filtered.where.has_value()) {
+    Expect(std::holds_alternative<std::string>(
+               filtered.where->value) &&
+               std::get<std::string>(filtered.where->value) ==
+                   "Arequipa",
+           "Debe interpretar el literal de texto.");
   }
 
+  const SelectQuery by_id = Parser::Parse(
+      " select * from personas where id = -25 ");
+  Expect(by_id.where.has_value() &&
+             std::holds_alternative<int>(by_id.where->value) &&
+             std::get<int>(by_id.where->value) == -25,
+         "Debe aceptar ids enteros con signo.");
+}
+
+void TestComparisonsAndEscaping() {
   const std::vector<std::pair<std::string, ComparisonOperator>>
       comparisons = {
           {"!=", ComparisonOperator::kNotEqual},
@@ -102,101 +84,95 @@ void TestProjectionAndComparisons() {
       };
   for (const auto &entry : comparisons) {
     const SelectQuery query = Parser::Parse(
-        "SELECT * FROM registros WHERE key " + entry.first + " 10;");
+        "SELECT * FROM personas WHERE id " + entry.first + " 10;");
     Expect(query.where.has_value() &&
                query.where->comparison == entry.second,
            "Debe reconocer el comparador " + entry.first + ".");
   }
+
+  const SelectQuery apostrophe = Parser::Parse(
+      "SELECT * FROM personas WHERE nombre = 'D''Angelo';");
+  Expect(apostrophe.where.has_value() &&
+             std::get<std::string>(apostrophe.where->value) ==
+                 "D'Angelo",
+         "Debe decodificar una comilla SQL duplicada.");
 }
 
 void TestInsert() {
-  QueryStatement statement =
-      Parser::ParseStatement("INSERT INTO registros VALUES (106, 530);");
-
+  const QueryStatement statement = Parser::ParseStatement(
+      "INSERT INTO personas VALUES "
+      "(106, 'Ana Torres', 'Arequipa', 'Ingeniera de Software');");
   Expect(std::holds_alternative<InsertQuery>(statement),
-         "Debe reconocer una sentencia INSERT.");
+         "Debe reconocer INSERT de una persona.");
   if (std::holds_alternative<InsertQuery>(statement)) {
     const InsertQuery &query = std::get<InsertQuery>(statement);
-    Expect(query.table == "registros",
-           "INSERT debe reconocer el nombre de la tabla.");
-    Expect(query.key == 106, "INSERT debe reconocer la clave.");
-    Expect(query.value == 530, "INSERT debe reconocer el valor.");
-  }
-}
-
-void TestInsertCaseWhitespaceAndSignedValues() {
-  QueryStatement statement = Parser::ParseStatement(
-      "  insert into Inventario values ( -7 , +25 )  ");
-
-  Expect(std::holds_alternative<InsertQuery>(statement),
-         "Debe aceptar INSERT sin importar mayusculas y espacios.");
-  if (std::holds_alternative<InsertQuery>(statement)) {
-    const InsertQuery &query = std::get<InsertQuery>(statement);
-    Expect(query.table == "Inventario",
-           "INSERT debe conservar el nombre original de la tabla.");
-    Expect(query.key == -7 && query.value == 25,
-           "INSERT debe aceptar enteros con signo.");
+    Expect(query.table == "personas" && query.id == 106,
+           "INSERT debe conservar tabla e id.");
+    Expect(query.nombre == "Ana Torres" &&
+               query.ciudad == "Arequipa" &&
+               query.profesion == "Ingeniera de Software",
+           "INSERT debe conservar los tres campos de texto.");
   }
 }
 
 void TestUpdateAndDelete() {
-  QueryStatement update_statement = Parser::ParseStatement(
-      "UPDATE registros SET value = 535 WHERE id = 106;");
+  const QueryStatement update_statement = Parser::ParseStatement(
+      "UPDATE personas SET profesion = 'Arquitecta' "
+      "WHERE id = 106;");
   Expect(std::holds_alternative<UpdateQuery>(update_statement),
          "Debe reconocer UPDATE.");
   if (std::holds_alternative<UpdateQuery>(update_statement)) {
     const UpdateQuery &query = std::get<UpdateQuery>(update_statement);
-    Expect(query.table == "registros" && query.column == "value" &&
-               query.value == 535,
-           "UPDATE debe reconocer tabla, columna y valor.");
-    Expect(query.where.has_value() && query.where->column == "id" &&
-               query.where->value == 106,
-           "UPDATE debe reconocer WHERE.");
+    Expect(query.column == "profesion" &&
+               std::get<std::string>(query.value) == "Arquitecta",
+           "UPDATE debe reconocer el nuevo texto.");
+    Expect(query.where.has_value() &&
+               std::get<int>(query.where->value) == 106,
+           "UPDATE debe reconocer WHERE por id.");
   }
 
-  QueryStatement delete_statement = Parser::ParseStatement(
-      "DELETE FROM registros WHERE value < 500;");
+  const QueryStatement delete_statement = Parser::ParseStatement(
+      "DELETE FROM personas WHERE ciudad <> 'Lima';");
   Expect(std::holds_alternative<DeleteQuery>(delete_statement),
          "Debe reconocer DELETE.");
   if (std::holds_alternative<DeleteQuery>(delete_statement)) {
     const DeleteQuery &query = std::get<DeleteQuery>(delete_statement);
     Expect(query.where.has_value() &&
-               query.where->comparison == ComparisonOperator::kLess,
-           "DELETE debe reconocer su condicion.");
+               query.where->comparison ==
+                   ComparisonOperator::kNotEqual &&
+               std::get<std::string>(query.where->value) == "Lima",
+           "DELETE debe conservar su condicion de texto.");
   }
 
   Expect(std::holds_alternative<UpdateQuery>(
              Parser::ParseStatement(
-                 "UPDATE registros SET value = 1;")),
+                 "UPDATE personas SET ciudad = 'Cusco';")),
          "UPDATE sin WHERE debe ser valido.");
   Expect(std::holds_alternative<DeleteQuery>(
-             Parser::ParseStatement("DELETE FROM registros;")),
+             Parser::ParseStatement("DELETE FROM personas;")),
          "DELETE sin WHERE debe ser valido.");
 }
 
 void TestInvalidQueries() {
   const std::vector<std::string> invalid_queries = {
       "",
-      "SELECT FROM registros;",
-      "SELECT * registros;",
-      "SELECT * FROM 123registros;",
-      "SELECT * FROM registros WHERE id;",
-      "SELECT * FROM registros WHERE id = texto;",
-      "SELECT * FROM registros; contenido_extra",
-      "SELECT * FROM registros WHERE id = 999999999999999999999999;",
-      "INSERT registros VALUES (1, 10);",
-      "INSERT INTO registros (1, 10);",
-      "INSERT INTO registros VALUES 1, 10;",
-      "INSERT INTO registros VALUES (1);",
-      "INSERT INTO registros VALUES (1, texto);",
-      "INSERT INTO registros VALUES (1, 10, 20);",
-      "INSERT INTO registros VALUES (999999999999999999999, 10);",
-      "SELECT key, FROM registros;",
-      "SELECT desconocida + 1 FROM registros;",
-      "UPDATE registros value = 10;",
-      "UPDATE registros SET value = texto;",
-      "DELETE registros WHERE id = 1;",
-      "DELETE FROM registros WHERE id LIKE 1;"};
+      "SELECT FROM personas;",
+      "SELECT * personas;",
+      "SELECT * FROM 123personas;",
+      "SELECT * FROM personas WHERE id;",
+      "SELECT * FROM personas; contenido_extra",
+      "SELECT * FROM personas WHERE id = 999999999999999999999999;",
+      "INSERT personas VALUES (1, 'A', 'B', 'C');",
+      "INSERT INTO personas VALUES (1, 'A', 'B');",
+      "INSERT INTO personas VALUES (1, A, 'B', 'C');",
+      "INSERT INTO personas VALUES ('1', 'A', 'B', 'C');",
+      "SELECT nombre, FROM personas;",
+      "SELECT desconocida + 1 FROM personas;",
+      "UPDATE personas profesion = 'A';",
+      "UPDATE personas SET profesion = texto;",
+      "DELETE personas WHERE id = 1;",
+      "DELETE FROM personas WHERE id LIKE 1;",
+      "SELECT * FROM personas WHERE ciudad = 'Lima;"};
 
   for (const std::string &sql : invalid_queries) {
     ExpectInvalid(sql);
@@ -207,13 +183,9 @@ void TestInvalidQueries() {
 
 int main() {
   std::cout << "=== PRUEBAS DEL PARSER SQL ===\n";
-
-  TestSelectWithoutWhere();
-  TestSelectWithWhere();
-  TestCaseWhitespaceAndSignedValue();
-  TestProjectionAndComparisons();
+  TestSelects();
+  TestComparisonsAndEscaping();
   TestInsert();
-  TestInsertCaseWhitespaceAndSignedValues();
   TestUpdateAndDelete();
   TestInvalidQueries();
 
@@ -221,7 +193,6 @@ int main() {
     std::cerr << failures << " prueba(s) fallaron.\n";
     return 1;
   }
-
   std::cout << "Todas las pruebas del parser pasaron correctamente.\n";
   return 0;
 }

@@ -13,9 +13,10 @@ class FilterOperator : public Operator {
   FilterOperator(Operator *child, Predicate predicate);
   ~FilterOperator() override = default;
 
-  void Open() override;
-  bool Next(Tuple *tuple) override;
-  void Close() override;
+ protected:
+  void DoOpen() override;
+  bool DoNext(Tuple *tuple) override;
+  void DoClose() override;
 
  private:
   Operator *child_;

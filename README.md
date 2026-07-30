@@ -1,265 +1,250 @@
 # Mini-SGBD en C++ con reemplazo adaptativo CAR
 
-Proyecto universitario de Bases de Datos II: un Sistema Gestor de Base de
-Datos educativo escrito en C++17. Integra almacenamiento en paginas fisicas
-de 4 KB, Buffer Pool con reemplazo CAR, indice hash extensible, operadores
-fisicos con Modelo Volcano, parser SQL, CLI y perfilado del costo de cada
-consulta.
+Proyecto universitario de Bases de Datos II: un motor educativo escrito en
+C++17 con almacenamiento binario paginado, Buffer Pool, reemplazo CAR,
+indice hash extensible, operadores Volcano, SQL, profiler y visualizacion
+interactiva.
 
 ## Estado actual
 
-El flujo principal del sistema es:
+El flujo funcional es:
 
 ```text
 SQL
  |
  v
 Parser -> SELECT / INSERT / UPDATE / DELETE
-                         |
-                         v
-                   QueryExecutor
-       +-----------------+------------------+
-       |                 |                  |
-       v                 v                  v
- IndexScan + RID   Filter + SeqScan   Mutaciones con rollback
-       |                 |
-       +--------> ProjectionOperator
-                         |
-                         v
-                   QueryProfiler
-                         |
-                         v
-              Resultados + tiempo + Buffer/I/O
+ |
+ v
+QueryExecutor
+ +-- IndexScan (id -> RID)
+ +-- Filter -> SeqScan
+ +-- Projection
+ +-- Mutaciones con rollback local
+ |
+ v
+QueryProfiler
+ +-- tiempo, hits, misses, hit ratio e I/O
+ +-- Open / Next / Close por operador
+ +-- estados T1 / T2 / B1 / B2 / p de CAR
+ |
+ v
+CLI + Visual Query Profiler HTML
 ```
 
-El indice utiliza la siguiente ruta de almacenamiento:
+El almacenamiento sigue esta ruta:
 
 ```text
-archivo .db -> DiskManager -> BufferPoolManager -> CARReplacer
-                                      |
-                                      v
-                           ExtensibleHashTable
+personas_sgbd.db
+        |
+        v
+DiskManager -> BufferPoolManager -> CARReplacer
+        |                |
+        v                +-> ExtensibleHashTable (id -> RID)
+    TableHeap
 ```
 
-Funcionalidades implementadas:
+## Esquema de datos
 
-1. Paginas fisicas de tamano fijo (`PAGE_SIZE = 4096`).
-2. Lectura, escritura y asignacion de paginas mediante `DiskManager`.
-3. Catalogo persistente con las raices de tabla e indice.
-4. `TableHeap` enlazado para almacenar registros en paginas fisicas.
-5. Contadores de lecturas y escrituras logicas de paginas.
-6. Buffer Pool con pin count, dirty bit, flush y metricas de hits/misses.
-7. Reemplazo adaptativo CAR con listas T1/T2 y listas fantasma B1/B2.
-8. Proteccion para impedir la expulsion de paginas fijadas.
-9. Sincronizacion automatica de paginas sucias al destruir el Buffer Pool.
-10. Indice hash extensible persistente mapeado sobre el Buffer Pool.
-11. Recuperacion de tabla e indice al reabrir el archivo `.db`.
-12. Contrato comun de operadores Volcano: `Open()`, `Next()` y `Close()`.
-13. Operadores `IndexScanOperator`, `SeqScanOperator`, `FilterOperator` y
-    `ProjectionOperator`.
-14. Parser para `SELECT`, `INSERT`, `UPDATE`, `DELETE` y comparadores.
-15. `QueryExecutor` con seleccion de plan indexado o secuencial.
-16. Inserciones, actualizaciones y borrados persistentes.
-17. Indice `key -> RID`; `IndexScan` recupera la fila desde `TableHeap`.
-18. Rollback de `INSERT` si falla la actualizacion del indice.
-19. CLI interactiva para ejecutar consultas SQL.
-20. Profiler por consulta con tiempo, Buffer hits/misses, hit ratio e I/O.
-21. Benchmark con repeticiones, media y desviacion estandar.
-22. Migracion automatica del indice legado `key -> value` a `key -> RID`.
+La tabla persistente se llama `personas`:
+
+| Columna | Tipo logico | Limite fisico | Uso |
+|---|---|---:|---|
+| `id` | entero de 32 bits | 4 bytes | clave primaria e indice hash |
+| `nombre` | texto | 63 bytes UTF-8 | nombre de la persona |
+| `ciudad` | texto | 47 bytes UTF-8 | ciudad de residencia |
+| `profesion` | texto | 63 bytes UTF-8 | profesion u ocupacion |
+
+Cada registro se codifica con longitud fija dentro de una pagina de 4 KB.
+La ocupacion se representa con un indicador explicito, por lo que ningun
+valor de `id` esta reservado como tombstone. Los textos se guardan dentro
+del archivo `.db`; no son punteros ni objetos `std::string` serializados.
+
+El indice almacena exclusivamente `id -> RID`. Un `RID` contiene
+`page_id + slot`; `IndexScanOperator` usa ese identificador para recuperar
+la persona completa desde `TableHeap`.
+
+## Funcionalidades implementadas
+
+- Paginas fisicas de 4 KB y archivo binario persistente.
+- Catalogo v3 con raiz de tabla, raiz de indice y conteo de filas.
+- `TableHeap` enlazado con insercion, lectura, actualizacion, borrado y
+  restauracion para rollback.
+- Buffer Pool con pin count, dirty bit, flush, hits y misses.
+- CAR con T1/T2, listas fantasma B1/B2 y parametro adaptativo `p`.
+- Indice hash extensible persistente sobre el Buffer Pool.
+- Recuperacion de tabla e indice despues de reiniciar.
+- Operadores Volcano `Open()`, `Next()` y `Close()`.
+- `IndexScanOperator`, `SeqScanOperator`, `FilterOperator` y
+  `ProjectionOperator`.
+- Parser y ejecutor para `SELECT`, `INSERT`, `UPDATE` y `DELETE`.
+- Comparadores `=`, `!=`, `<>`, `<`, `<=`, `>` y `>=`.
+- Rollback de `INSERT` si falla la escritura del indice.
+- Coordinacion del indice al actualizar un `id` o eliminar una fila.
+- CLI con metricas por consulta.
+- Benchmark de `IndexScan` frente a `Filter + SeqScan`.
+- Visualizador HTML inspirado en Perfopticon.
 
 ## SQL soportado
 
-La version actual implementa intencionalmente un subconjunto pequeno:
-
 ```sql
-SELECT * FROM registros;
-SELECT * FROM registros WHERE id = 103;
-SELECT * FROM registros WHERE key = 103;
-SELECT * FROM registros WHERE value = 515;
-SELECT * FROM registros WHERE valor = 515;
-SELECT key FROM registros WHERE value >= 515;
-SELECT value, key FROM registros WHERE id != 103;
-INSERT INTO registros VALUES (106, 530);
-UPDATE registros SET value = 535 WHERE id = 106;
-UPDATE registros SET key = 206 WHERE id = 106;
-DELETE FROM registros WHERE id = 206;
+SELECT * FROM personas;
+SELECT * FROM personas WHERE id = 103;
+SELECT nombre, profesion
+FROM personas
+WHERE ciudad = 'Arequipa';
+
+INSERT INTO personas
+VALUES (106, 'Ana Torres', 'Arequipa', 'Ingeniera de Software');
+
+UPDATE personas
+SET profesion = 'Arquitecta'
+WHERE id = 106;
+
+UPDATE personas
+SET id = 206
+WHERE id = 106;
+
+DELETE FROM personas WHERE id = 206;
+DELETE FROM personas WHERE ciudad = 'Lima';
 ```
 
-Las palabras clave SQL no distinguen mayusculas de minusculas. Las
-condiciones admiten `=`, `!=`, `<>`, `<`, `<=`, `>` y `>=` con enteros
-positivos o negativos. Las proyecciones pueden usar `key/id` y
-`value/valor`.
+Los literales de texto requieren comillas simples. Una comilla dentro del
+texto se escapa duplicandola:
 
-Seleccion de plan:
+```sql
+SELECT * FROM personas WHERE nombre = 'D''Angelo';
+```
+
+Las palabras clave SQL no distinguen mayusculas de minusculas. Los nombres
+de columnas validos son `id`, `nombre`, `ciudad` y `profesion`. El ejecutor
+rechaza un texto usado contra `id` y un entero usado contra una columna de
+texto.
+
+### Seleccion del plan
 
 | Consulta | Plan |
 |---|---|
 | Sin `WHERE` | `SeqScan` |
-| `WHERE key/id = N` con indice | `IndexScan` |
-| Otro comparador sobre `key/id` | `Filter + SeqScan` |
-| `WHERE value/valor OP N` | `Filter + SeqScan` |
-| Proyeccion de columnas | agrega `ProjectionOperator` |
-| `INSERT INTO registros VALUES (K, V)` | `Insert` |
+| `WHERE id = N` con indice | `IndexScan` |
+| Otro comparador sobre `id` | `Filter + SeqScan` |
+| Comparacion sobre texto | `Filter + SeqScan` |
+| Seleccion parcial de columnas | agrega `ProjectionOperator` |
+| `INSERT INTO personas VALUES (...)` | `Insert` |
 | `UPDATE ... SET ... [WHERE ...]` | `Update` |
 | `DELETE FROM ... [WHERE ...]` | `Delete` |
 
-Las claves son unicas. El indice no duplica el valor de la fila: guarda un
-`RID` compacto con `page_id` y `slot`. Si el indice falla durante `INSERT`,
-el registro recien escrito se marca como borrado y el conteo del catalogo se
-revierte.
+## CLI y persistencia
 
-## CLI y profiler
+En la primera ejecucion, `main_app` crea `personas_sgbd.db` y carga:
 
-En la primera ejecucion, `main_app` crea `mini_sgbd.db` y carga una tabla de
-demostracion llamada `registros` con cinco filas. En las ejecuciones
-posteriores recupera la misma tabla y el mismo indice mediante la pagina de
-catalogo; no vuelve a crear sus paginas raiz.
+| id | nombre | ciudad | profesion |
+|---:|---|---|---|
+| 101 | Ana Torres | Arequipa | Ingeniera |
+| 102 | Luis Mendoza | Lima | Medico |
+| 103 | Carla Rojas | Cusco | Arquitecta |
+| 104 | Diego Salazar | Arequipa | Analista de Datos |
+| 105 | Sofia Vargas | Trujillo | Abogada |
+
+Ejemplo:
 
 ```text
-mini-sgbd> SELECT * FROM registros WHERE id = 103;
-key         value
---------------------
-103         515
-Filas: 1
-Plan: IndexScan
+mini-sgbd> SELECT nombre, profesion FROM personas WHERE ciudad = 'Arequipa';
+nombre         profesion
+-------------  -----------------
+Ana Torres     Ingeniera
+Diego Salazar  Analista de Datos
+Filas: 2
+Plan: Filter + SeqScan
 Tiempo: 0.120 ms
-Buffer hits: 3
+Buffer hits: 1
 Buffer misses: 0
 Hit ratio: 100.00 %
 Lecturas de disco: 0
 Escrituras de disco: 0
 Costo I/O: 0 operaciones de pagina
+Visualizacion: build/query_profile.html
 ```
 
-Ejemplo de carga desde la misma CLI:
-
-```text
-mini-sgbd> INSERT INTO registros VALUES (106, 530);
-Registro insertado: key=106, value=530
-Filas afectadas: 1
-Plan: Insert
-```
-
-```text
-mini-sgbd> UPDATE registros SET value = 535 WHERE id = 106;
-Filas actualizadas: 1
-Plan: Update
-
-mini-sgbd> DELETE FROM registros WHERE id = 106;
-Filas eliminadas: 1
-Plan: Delete
-```
-
-Comandos adicionales:
+Comandos propios de la CLI:
 
 ```text
 help
+visualize
+car-demo
 exit
 quit
 ```
 
-Las metricas se calculan como diferencias antes y despues de cada consulta,
-por lo que no arrastran los contadores de consultas anteriores. El costo de
-I/O es la suma de lecturas y escrituras logicas de paginas. Una consulta
-atendida completamente desde el Buffer Pool puede reportar cero operaciones
-de disco.
+Las metricas son diferencias de contadores antes y despues de cada
+consulta. Una consulta atendida desde el Buffer Pool puede reportar cero
+operaciones de disco.
 
-## Estructura del proyecto
+## Visual Query Profiler
 
-```text
-PROYECTO-BASE-DE-DATOS-2/
-|-- CMakeLists.txt
-|-- .gitignore
-|-- README.md
-|-- include/
-|   |-- storage/
-|   |   |-- catalog_page.h
-|   |   |-- catalog_manager.h
-|   |   |-- rid.h
-|   |   |-- table_page.h
-|   |   `-- table_heap.h
-|   |-- buffer/
-|   |-- index/
-|   `-- query/
-|       |-- tuple.h
-|       |-- operator.h
-|       |-- query.h
-|       |-- parser.h
-|       |-- index_scan_operator.h
-|       |-- seq_scan_operator.h
-|       |-- filter_operator.h
-|       |-- projection_operator.h
-|       |-- query_executor.h
-|       |-- query_profiler.h
-|       `-- cli.h
-|-- src/
-|   |-- storage/
-|   |-- buffer/
-|   |-- index/
-|   |-- query/
-|   |-- benchmark/
-|   `-- main.cpp
-|-- tests/
-|   |-- test_hash.cpp
-|   |-- test_parser.cpp
-|   |-- test_seq_scan.cpp
-|   |-- test_filter.cpp
-|   |-- test_query_executor.cpp
-|   |-- test_cli.cpp
-|   |-- test_query_profiler.cpp
-|   |-- test_buffer_pool.cpp
-|   |-- test_persistence.cpp
-|   |-- test_index_stress.cpp
-|   `-- test_projection.cpp
-|-- docs/
-|   |-- experimentos.md
-|   `-- evidencias/
-`-- data/
+Cada consulta reemplaza `build/query_profile.html` con un reporte
+autocontenido que incluye:
+
+1. Grafo del plan fisico.
+2. Tiempo inclusivo y propio por operador.
+3. Linea temporal de `Open`, `Next` y `Close`.
+4. Hits, misses, hit ratio y costo de I/O.
+5. Evolucion de T1/T2, B1/B2 y `p`.
+6. Exportacion del perfil a JSON.
+
+La traza se activa en `main_app` y permanece desactivada durante el
+benchmark para no sesgar sus tiempos.
+
+```powershell
+.\build\Debug\main_app.exe
+Start-Process .\build\query_profile.html
 ```
 
-## Componentes principales
+Para generar una carga CAR determinista:
 
-### Almacenamiento y Buffer
+```text
+mini-sgbd> car-demo
+Demostracion CAR generada: build/car_demo.html
+```
 
-- `DiskManager`: administra el archivo binario, paginas de 4 KB y contadores
-  de lecturas/escrituras.
-- `CatalogManager`: crea o recupera la pagina cero y mantiene las raices
-  persistentes de tabla e indice.
-- `TablePage`: almacena registros `key/value` y el enlace a la pagina
-  siguiente.
-- `TableHeap`: inserta, actualiza y marca registros borrados en una cadena
-  persistente de `TablePage`; expone acceso directo mediante `RID`.
-- `Page`: contiene datos crudos, identificador, pin count y dirty bit.
-- `BufferPoolManager`: coordina memoria y disco, impide expulsar paginas
-  fijadas, escribe victimas sucias y realiza flush al finalizar.
-- `CARReplacer`: mantiene T1/T2 y B1/B2, adapta el parametro `p` y solo
-  devuelve frames expulsables.
+La arquitectura del visualizador esta en
+[`docs/visualizacion.md`](docs/visualizacion.md).
 
-### Indice
+## Estructura principal
 
-- `ExtensibleHashTable`: implementa insercion, actualizacion, borrado y
-  busqueda `key -> RID`. Su
-  `directory_page_id` se guarda en el catalogo y se recupera al reiniciar.
-- `HashDirectoryPage`: representa el directorio del hash.
-- `HashBucketPage`: almacena pares clave/RID dentro de una pagina.
+```text
+include/
+|-- storage/
+|   |-- person_record.h
+|   |-- table_page.h
+|   |-- table_heap.h
+|   |-- catalog_page.h
+|   `-- catalog_manager.h
+|-- buffer/
+|-- index/
+`-- query/
+    |-- tuple.h
+    |-- query.h
+    |-- parser.h
+    |-- operator.h
+    |-- *_operator.h
+    |-- query_executor.h
+    |-- query_profiler.h
+    |-- query_visualizer.h
+    `-- cli.h
 
-### Procesamiento de consultas
+src/
+|-- storage/
+|-- buffer/
+|-- index/
+|-- query/
+|-- benchmark/
+`-- main.cpp
 
-- `Parser`: transforma SQL en `SelectQuery`, `InsertQuery`, `UpdateQuery` o
-  `DeleteQuery`.
-- `Operator`: interfaz comun del Modelo Volcano.
-- `IndexScanOperator`: obtiene un RID del indice y lee la fila desde
-  `TableHeap`.
-- `SeqScanOperator`: recorre directamente las paginas de `TableHeap` mediante
-  el Buffer Pool. Conserva ademas el constructor sobre `vector<Tuple>` para
-  pruebas unitarias aisladas.
-- `FilterOperator`: aplica un predicado a otro operador Volcano.
-- `ProjectionOperator`: conserva solo las columnas solicitadas.
-- `QueryExecutor`: crea el plan y recolecta los resultados.
-- Para mutaciones, `QueryExecutor` mantiene coordinados `TableHeap`, catalogo
-  e indice; revierte cambios locales cuando una operacion falla.
-- `QueryProfiler`: mide tiempo, Buffer hits/misses e I/O por consulta.
-- `RunCli`: mantiene la sesion interactiva y presenta resultados/metricas.
+tests/                  12 suites automatizadas
+docs/                   informe, resultados y evidencias
+data/                   archivos de datos generados
+```
 
 ## Compilacion
 
@@ -268,20 +253,18 @@ Requisitos:
 - CMake 3.12 o superior.
 - Compilador compatible con C++17.
 
-Configuracion y compilacion:
-
 ```powershell
 cmake -S . -B build
 cmake --build build --config Debug
 ```
 
-Ejecutar la CLI con un generador multiconfiguracion como Visual Studio:
+Con Visual Studio:
 
 ```powershell
 .\build\Debug\main_app.exe
 ```
 
-Con un generador de configuracion unica, el ejecutable suele quedar en:
+Con un generador de configuracion unica:
 
 ```powershell
 .\build\main_app.exe
@@ -289,98 +272,74 @@ Con un generador de configuracion unica, el ejecutable suele quedar en:
 
 ## Pruebas
 
-Ejecutar todas las pruebas:
-
 ```powershell
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-Suites registradas:
+Las 12 suites cubren parser, operadores, CLI, profiler, visualizador,
+persistencia, Buffer Pool, CAR, indice y casos de estres. Entre otros casos,
+validan:
 
-- `HashIndexTest`
-- `ParserTest`
-- `SeqScanTest`
-- `FilterTest`
-- `QueryExecutorTest`
-- `CliTest`
-- `QueryProfilerTest`
-- `BufferPoolTest`
-- `PersistenceTest`
-- `IndexStressTest`
-- `ProjectionTest`
-
-`BufferPoolTest` valida especificamente:
-
-- Ninguna pagina fijada puede ser expulsada.
-- Un pin count mayor que cero bloquea el reemplazo.
-- `Victim()` retorna sin entrar en un bucle infinito.
-- Las paginas sucias se escriben al ser expulsadas.
-- El destructor sincroniza las paginas sucias restantes.
-
-`IndexStressTest` valida 5,000 claves, varios splits consecutivos, reinicio,
-duplicados, claves inexistentes, el limite fisico del directorio y el rechazo
-de catalogos invalidos o incompletos.
+- Campos de texto, espacios y comillas SQL escapadas.
+- `IndexScan` mediante `id -> RID`.
+- Filtros textuales mediante `Filter + SeqScan`.
+- Varios splits, 5,000 claves, duplicados y claves inexistentes.
+- Limite del directorio hash.
+- Rollback de una insercion cuando falla el indice.
+- Persistencia de `INSERT`, `UPDATE` y `DELETE`.
+- Rechazo de catalogos invalidos, incompletos o incompatibles.
+- Plan fisico, fases Volcano y eventos CAR del reporte HTML.
 
 ## Benchmark
 
-`benchmark_load` crea bases fisicas independientes y las vuelve a abrir antes
-de medir. Ejecuta cinco repeticiones por defecto y calcula media y desviacion
-estandar muestral. Todas las busquedas pasan por `QueryExecutor` y
-`QueryProfiler`:
-con indice usa `IndexScan`; sin indice usa `Filter + SeqScan` sobre
-`TableHeap`. El CSV incluye tiempo, hits, misses, hit ratio, lecturas,
-escrituras, costo total de I/O y tamano del archivo.
-
-Ejecucion completa; la grafica SVG se genera sin Python:
+`benchmark_load` crea bases independientes, las reabre y ejecuta las
+consultas a traves de `QueryExecutor` y `QueryProfiler`. Por defecto realiza
+cinco repeticiones y calcula media y desviacion estandar muestral.
 
 ```powershell
 .\build\Debug\benchmark_load.exe
 ```
 
-Para una ejecucion corta de validacion se pueden indicar archivo de salida,
-tamano maximo, numero de consultas y repeticiones:
+Ejecucion corta:
 
 ```powershell
 .\build\Debug\benchmark_load.exe .\build\benchmark_smoke.csv 1000 10 3
 ```
 
-Los artefactos de referencia se mantienen en:
+Genera CSV de resumen, CSV crudo y una grafica SVG sin depender de Python.
+El codigo carga personas sinteticas deterministas; los dos modos consultan
+el mismo predicado `id = N`.
 
-```text
-docs/resultados_benchmark.csv
-docs/resultados_benchmark_raw.csv
-docs/plot_benchmark.py
-docs/comparacion_busqueda.svg
-docs/comparacion_busqueda.png
-docs/experimentos.md
-docs/evidencias/
-```
+## Compatibilidad del archivo binario
 
-`docs/experimentos.md` contiene el protocolo, la tabla de resultados y la
-interpretacion de tiempo, hit ratio, I/O y espacio. `docs/evidencias/`
-contiene capturas de la CLI, reinicio, persistencia y benchmark.
+El esquema de cuatro columnas usa `CATALOG_VERSION = 3`. Los archivos de
+las versiones anteriores almacenaban pares de enteros y no se
+reinterpretan automaticamente. `main_app` usa el archivo nuevo
+`personas_sgbd.db`, por lo que un `mini_sgbd.db` anterior queda intacto.
 
-## Limitaciones y trabajo pendiente
+Si se abre deliberadamente un catalogo v1 o v2 con este motor, se devuelve
+un error de version incompatible en vez de leer registros con un formato
+incorrecto.
 
-- El catalogo administra actualmente una sola tabla y un solo indice.
-- Los borrados dejan tombstones persistentes; falta compactacion global y
-  una lista de paginas libres.
-- La clave `INT_MIN` esta reservada como marca interna de borrado.
+## Limitaciones
+
+- El catalogo administra una tabla y un indice.
+- Los borrados reutilizan slots, pero falta compactacion global y una lista
+  de paginas libres.
 - Cada `WHERE` admite una comparacion; faltan `AND`, `OR`, joins y
   agregaciones.
-- El directorio hash ocupa una sola pagina y detiene su crecimiento al llegar
-  a la profundidad global maxima representable.
-- El rollback cubre fallos reportados durante la operacion, pero no reemplaza
-  un WAL para recuperar un cierre abrupto del proceso o del sistema.
+- El directorio hash ocupa una pagina y tiene una profundidad maxima.
+- El rollback local no reemplaza un WAL frente a un cierre abrupto.
+- Los textos tienen limites fijos por el diseno de registros paginados.
+- La traza conserva hasta 2,000 eventos Volcano y 1,000 eventos CAR; los
+  acumulados por operador siguen siendo completos.
 
 ## Resumen
 
-El proyecto ya dispone de un flujo funcional de extremo a extremo:
-
 ```text
-SQL -> Parser -> Plan Volcano -> Ejecucion -> Resultados -> Profiler
+SQL -> Parser -> Plan Volcano -> Ejecucion -> Perfil -> Visualizacion
 ```
 
-El almacenamiento, Buffer Pool, CAR e indice sostienen las busquedas
-indexadas; la CLI permite observar cuantitativamente el plan, el tiempo, el
-comportamiento del Buffer Pool y el costo de I/O de cada consulta.
+El proyecto ya permite almacenar y consultar personas con un esquema
+realista, comparar acceso indexado y secuencial, observar CAR y relacionar
+el plan fisico con el tiempo y el costo de I/O.

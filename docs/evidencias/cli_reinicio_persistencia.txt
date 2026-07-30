@@ -1,33 +1,26 @@
-MINI-SGBD - SESION 2: REINICIO Y PERSISTENCIA
+=== SESION 2: REINICIO Y PERSISTENCIA ===
+[INFO] Tabla 'personas' inicializada con 5 filas persistentes.
+[INFO] Indice hash persistente disponible para id.
+[INFO] Archivo: personas_sgbd.db
 
-[INFO] Tabla 'registros' inicializada con 6 filas persistentes.
-[INFO] Archivo: mini_sgbd.db
-
-mini-sgbd> SELECT * FROM registros WHERE id = 106;
-106  535
-Filas: 1
-Plan: IndexScan
-Buffer hits: 1
-Buffer misses: 3
-Lecturas de disco: 3
-Costo I/O: 3 operaciones de pagina
-
-mini-sgbd> SELECT * FROM registros WHERE id = 107;
-107  540
+mini-sgbd> SELECT * FROM personas WHERE id = 106;
+id   nombre          ciudad     profesion
+---  --------------  ---------  ----------------------
+106  Valeria Quispe  Arequipa   Arquitecta de Software
 Filas: 1
 Plan: IndexScan
 
-mini-sgbd> SELECT * FROM registros WHERE id = 104;
+mini-sgbd> SELECT * FROM personas WHERE id = 104;
 Sin resultados.
+Filas: 0
 Plan: IndexScan
 
-mini-sgbd> SELECT key FROM registros WHERE value >= 525;
-105
-106
-107
-Filas: 3
+mini-sgbd> SELECT nombre FROM personas WHERE ciudad = 'Arequipa';
+nombre
+--------------
+Ana Torres
+Valeria Quispe
+Filas: 2
 Plan: Filter + SeqScan
 
-Evidencia física:
-mini_sgbd.db = 16,384 bytes = 4 páginas de 4 KB.
-
+personas_sgbd.db = 16,384 bytes = 4 paginas fisicas de 4 KB.

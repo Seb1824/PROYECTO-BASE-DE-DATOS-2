@@ -16,13 +16,17 @@ set(ENGINE_SOURCES
     src/buffer/buffer_pool_manager.cpp
     src/buffer/page.cpp
     src/index/extensible_hash_table.cpp
+    src/query/car_visualizer_demo.cpp
     src/query/cli.cpp
+    src/query/execution_trace.cpp
     src/query/filter_operator.cpp
     src/query/index_scan_operator.cpp
+    src/query/operator.cpp
     src/query/parser.cpp
     src/query/projection_operator.cpp
     src/query/query_executor.cpp
     src/query/query_profiler.cpp
+    src/query/query_visualizer.cpp
     src/query/seq_scan_operator.cpp
 )
 
@@ -98,6 +102,12 @@ add_executable(test_projection
     ${ENGINE_SOURCES}
 )
 
+# 15. Pruebas del perfil visual inspirado en Perfopticon
+add_executable(test_query_visualizer
+    tests/test_query_visualizer.cpp
+    ${ENGINE_SOURCES}
+)
+
 # Habilitar pruebas con CTest
 enable_testing()
 add_test(NAME HashIndexTest COMMAND test_hash)
@@ -111,3 +121,4 @@ add_test(NAME BufferPoolTest COMMAND test_buffer_pool)
 add_test(NAME PersistenceTest COMMAND test_persistence)
 add_test(NAME IndexStressTest COMMAND test_index_stress)
 add_test(NAME ProjectionTest COMMAND test_projection)
+add_test(NAME QueryVisualizerTest COMMAND test_query_visualizer)

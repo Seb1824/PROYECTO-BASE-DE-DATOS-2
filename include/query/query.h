@@ -7,6 +7,8 @@
 
 namespace minisgbd {
 
+using ScalarValue = std::variant<int, std::string>;
+
 enum class ComparisonOperator {
   kEqual,
   kNotEqual,
@@ -19,7 +21,7 @@ enum class ComparisonOperator {
 struct Condition {
   std::string column;
   ComparisonOperator comparison{ComparisonOperator::kEqual};
-  int value{0};
+  ScalarValue value{0};
 };
 
 struct SelectQuery {
@@ -31,14 +33,16 @@ struct SelectQuery {
 
 struct InsertQuery {
   std::string table;
-  int key{0};
-  int value{0};
+  int id{0};
+  std::string nombre;
+  std::string ciudad;
+  std::string profesion;
 };
 
 struct UpdateQuery {
   std::string table;
   std::string column;
-  int value{0};
+  ScalarValue value{0};
   std::optional<Condition> where;
 };
 

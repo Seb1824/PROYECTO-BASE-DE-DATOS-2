@@ -37,6 +37,7 @@ class BufferPoolManager {
   uint64_t GetHitCount() const;
   uint64_t GetMissCount() const;
   double GetHitRatio() const;
+  CARReplacer *GetReplacer() const;
 
  private:
   bool TryGetFrame(frame_id_t *out_frame_id);

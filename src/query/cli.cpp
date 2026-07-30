@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "query/car_visualizer_demo.h"
+
 namespace minisgbd {
 namespace {
 
@@ -58,6 +60,8 @@ const char *PlanName(QueryPlanType plan_type) {
       return "Update";
     case QueryPlanType::kDelete:
       return "Delete";
+    case QueryPlanType::kCarDemo:
+      return "CAR Demo";
   }
 
   return "Desconocido";
@@ -65,23 +69,43 @@ const char *PlanName(QueryPlanType plan_type) {
 
 void PrintHelp(std::ostream &output) {
   output << "Comandos disponibles:\n"
-         << "  SELECT * FROM registros;\n"
-         << "  SELECT * FROM registros WHERE id = 101;\n"
-         << "  SELECT key FROM registros WHERE value >= 505;\n"
-         << "  SELECT * FROM registros WHERE value = 505;\n"
-         << "  INSERT INTO registros VALUES (106, 530);\n"
-         << "  UPDATE registros SET value = 535 WHERE id = 106;\n"
-         << "  DELETE FROM registros WHERE id = 106;\n"
+         << "  SELECT * FROM personas;\n"
+         << "  SELECT * FROM personas WHERE id = 101;\n"
+         << "  SELECT nombre, profesion FROM personas "
+            "WHERE ciudad = 'Arequipa';\n"
+         << "  INSERT INTO personas VALUES "
+            "(106, 'Ana Torres', 'Arequipa', 'Ingeniera');\n"
+         << "  UPDATE personas SET profesion = 'Arquitecta' "
+            "WHERE id = 106;\n"
+         << "  DELETE FROM personas WHERE id = 106;\n"
+         << "  car-demo  Genera una traza adaptativa completa de CAR.\n"
+         << "  visualize  Muestra la ruta del perfil visual generado.\n"
          << "  help  Muestra esta ayuda.\n"
          << "  exit  Cierra la CLI.\n";
+}
+
+std::string ColumnValue(const Tuple &tuple,
+                        const std::string &column) {
+  if (column == "id") {
+    return std::to_string(tuple.id);
+  }
+  if (column == "nombre") {
+    return tuple.nombre;
+  }
+  if (column == "ciudad") {
+    return tuple.ciudad;
+  }
+  return tuple.profesion;
 }
 
 void PrintResults(std::ostream &output, const ProfiledQueryResult &result) {
   if (result.plan_type == QueryPlanType::kInsert) {
     if (!result.rows.empty()) {
       const Tuple &tuple = result.rows.front();
-      output << "Registro insertado: key=" << tuple.key
-             << ", value=" << tuple.value << '\n';
+      output << "Persona insertada: id=" << tuple.id
+             << ", nombre='" << tuple.nombre
+             << "', ciudad='" << tuple.ciudad
+             << "', profesion='" << tuple.profesion << "'\n";
     }
     output << "Filas afectadas: " << result.rows.size() << '\n';
   } else if (result.plan_type == QueryPlanType::kUpdate) {
@@ -92,19 +116,35 @@ void PrintResults(std::ostream &output, const ProfiledQueryResult &result) {
     output << "Sin resultados.\n";
     output << "Filas: 0\n";
   } else {
+    std::vector<std::size_t> widths;
+    widths.reserve(result.output_columns.size());
     for (const std::string &column : result.output_columns) {
-      output << std::left << std::setw(12) << column;
+      std::size_t width = column.size();
+      for (const Tuple &tuple : result.rows) {
+        width = std::max(
+            width, ColumnValue(tuple, column).size());
+      }
+      widths.push_back(width + 2);
+    }
+
+    for (std::size_t index = 0;
+         index < result.output_columns.size(); ++index) {
+      output << std::left
+             << std::setw(static_cast<int>(widths[index]))
+             << result.output_columns[index];
     }
     output << '\n';
-    output << std::string(result.output_columns.size() * 12, '-') << '\n';
+    for (const std::size_t width : widths) {
+      output << std::string(width - 2, '-') << "  ";
+    }
+    output << '\n';
 
     for (const Tuple &tuple : result.rows) {
-      for (const std::string &column : result.output_columns) {
-        if (column == "key") {
-          output << std::left << std::setw(12) << tuple.key;
-        } else {
-          output << std::left << std::setw(12) << tuple.value;
-        }
+      for (std::size_t index = 0;
+           index < result.output_columns.size(); ++index) {
+        output << std::left
+               << std::setw(static_cast<int>(widths[index]))
+               << ColumnValue(tuple, result.output_columns[index]);
       }
       output << '\n';
     }
@@ -122,6 +162,9 @@ void PrintResults(std::ostream &output, const ProfiledQueryResult &result) {
   output << "Escrituras de disco: " << result.metrics.disk_writes << '\n';
   output << "Costo I/O: " << result.metrics.io_operations
          << " operaciones de pagina\n";
+  if (!result.visualization_path.empty()) {
+    output << "Visualizacion: " << result.visualization_path << '\n';
+  }
   output << std::defaultfloat;
 }
 
@@ -158,6 +201,29 @@ int RunCli(std::istream &input, std::ostream &output,
 
     if (normalized_command == "help") {
       PrintHelp(output);
+      continue;
+    }
+
+    if (normalized_command == "visualize" ||
+        normalized_command == "visualizar") {
+      if (profiler->GetVisualizationPath().empty()) {
+        output << "La visualizacion automatica no esta configurada.\n";
+      } else {
+        output << "Perfil visual: "
+               << profiler->GetVisualizationPath()
+               << "\nEjecuta primero una consulta para actualizarlo.\n";
+      }
+      continue;
+    }
+
+    if (normalized_command == "car-demo") {
+      const std::string demo_path = "build/car_demo.html";
+      try {
+        GenerateCARDemoReport(demo_path);
+        output << "Demostracion CAR generada: " << demo_path << '\n';
+      } catch (const std::exception &error) {
+        output << "[ERROR] " << error.what() << '\n';
+      }
       continue;
     }
 

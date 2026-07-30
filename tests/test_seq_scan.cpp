@@ -20,9 +20,9 @@ void Expect(bool condition, const std::string &message) {
 
 void TestScanLifecycle() {
   const std::vector<Tuple> tuples = {
-      Tuple{1, 100},
-      Tuple{2, 200},
-      Tuple{3, 300},
+      Tuple{1, "Ana", "Lima", "Ingeniera"},
+      Tuple{2, "Bruno", "Cusco", "Medico"},
+      Tuple{3, "Carla", "Piura", "Abogada"},
   };
 
   SeqScanOperator scan(tuples);
@@ -34,10 +34,8 @@ void TestScanLifecycle() {
 
   for (std::size_t index = 0; index < tuples.size(); ++index) {
     Expect(scan.Next(&output), "Debe producir todos los registros.");
-    Expect(output.key == tuples[index].key,
-           "Debe conservar el orden de las claves.");
-    Expect(output.value == tuples[index].value,
-           "Debe conservar el orden de los valores.");
+    Expect(output == tuples[index],
+           "Debe conservar cada persona y su orden.");
   }
 
   Expect(!scan.Next(&output),
@@ -61,8 +59,8 @@ void TestEmptyScan() {
 
 void TestReopenRestartsScan() {
   const std::vector<Tuple> tuples = {
-      Tuple{10, 1000},
-      Tuple{20, 2000},
+      Tuple{10, "Ana", "Lima", "Ingeniera"},
+      Tuple{20, "Luis", "Cusco", "Medico"},
   };
 
   SeqScanOperator scan(tuples);
@@ -70,17 +68,18 @@ void TestReopenRestartsScan() {
 
   scan.Open();
   Expect(scan.Next(&output), "La primera ejecucion debe producir datos.");
-  Expect(output.key == 10, "La primera ejecucion debe iniciar en la clave 10.");
+  Expect(output.id == 10, "La primera ejecucion debe iniciar en el id 10.");
   scan.Close();
 
   scan.Open();
   Expect(scan.Next(&output), "Open() debe permitir volver a ejecutar el scan.");
-  Expect(output.key == 10, "Open() debe reiniciar el cursor.");
+  Expect(output.id == 10, "Open() debe reiniciar el cursor.");
   scan.Close();
 }
 
 void TestNullOutput() {
-  const std::vector<Tuple> tuples = {Tuple{1, 100}};
+  const std::vector<Tuple> tuples = {
+      Tuple{1, "Ana", "Lima", "Ingeniera"}};
   SeqScanOperator scan(tuples);
 
   scan.Open();

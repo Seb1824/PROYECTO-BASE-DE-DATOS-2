@@ -29,6 +29,14 @@ void Expect(bool condition, const std::string &message) {
   }
 }
 
+PersonRecord BuildPerson(int id) {
+  return PersonRecord{
+      id,
+      "Persona " + std::to_string(id),
+      id % 2 == 0 ? "Lima" : "Arequipa",
+      id % 3 == 0 ? "Ingeniera" : "Analista"};
+}
+
 void TestPhysicalTableAndPersistentIndex() {
   const std::string db_file = "test_persistence.db";
   constexpr int kTupleCount = TABLE_PAGE_CAPACITY + 89;
@@ -47,13 +55,14 @@ void TestPhysicalTableAndPersistentIndex() {
     Expect(hash_index.IsNewlyCreated(),
            "El indice debe crearse en una base nueva.");
 
-    for (int key = 1; key <= kTupleCount; ++key) {
+    for (int id = 1; id <= kTupleCount; ++id) {
+      const PersonRecord person = BuildPerson(id);
       const std::optional<RID> rid =
-          table_heap.InsertTuple(key, key * 10);
+          table_heap.InsertTuple(person);
       Expect(rid.has_value(),
              "Debe insertar cada registro en paginas fisicas.");
       Expect(rid.has_value() &&
-                 hash_index.Insert(key, rid->Encode()),
+                 hash_index.Insert(id, rid->Encode()),
              "Debe insertar cada registro en el indice.");
     }
 
@@ -86,11 +95,11 @@ void TestPhysicalTableAndPersistentIndex() {
                pages_before_open == page_count_after_creation,
            "Abrir tabla e indice no debe asignar paginas nuevas.");
 
-    QueryExecutor executor("registros", &table_heap, &hash_index);
+    QueryExecutor executor("personas", &table_heap, &hash_index);
     QueryProfiler profiler(&executor, &bpm, &disk_manager);
 
     const ProfiledQueryResult all_rows =
-        profiler.Execute("SELECT * FROM registros;");
+        profiler.Execute("SELECT * FROM personas;");
     Expect(all_rows.rows.size() == kTupleCount,
            "SeqScan fisico debe recorrer todos los registros.");
     Expect(all_rows.plan_type == QueryPlanType::kSeqScan,
@@ -102,9 +111,8 @@ void TestPhysicalTableAndPersistentIndex() {
 
     bool ordered = true;
     for (int index = 0; index < kTupleCount; ++index) {
-      if (all_rows.rows[static_cast<std::size_t>(index)].key != index + 1 ||
-          all_rows.rows[static_cast<std::size_t>(index)].value !=
-              (index + 1) * 10) {
+      if (all_rows.rows[static_cast<std::size_t>(index)] !=
+          BuildPerson(index + 1)) {
         ordered = false;
         break;
       }
@@ -113,20 +121,20 @@ void TestPhysicalTableAndPersistentIndex() {
            "SeqScan fisico debe conservar orden y contenido.");
 
     const std::vector<Tuple> indexed =
-        executor.Execute("SELECT * FROM registros WHERE id = 512;");
-    Expect(indexed.size() == 1 && indexed[0].key == 512 &&
-               indexed[0].value == 5120,
-           "El indice persistido debe resolver claves tras el reinicio.");
+        executor.Execute("SELECT * FROM personas WHERE id = 80;");
+    Expect(indexed.size() == 1 && indexed[0] == BuildPerson(80),
+           "El indice persistido debe resolver ids tras el reinicio.");
     Expect(executor.GetLastPlanType() == QueryPlanType::kIndexScan,
            "La busqueda persistida debe usar IndexScan.");
 
     const std::vector<Tuple> filtered =
-        executor.Execute("SELECT * FROM registros WHERE value = 1230;");
-    Expect(filtered.size() == 1 && filtered[0].key == 123,
+        executor.Execute(
+            "SELECT * FROM personas WHERE nombre = 'Persona 73';");
+    Expect(filtered.size() == 1 && filtered[0] == BuildPerson(73),
            "Filter + SeqScan debe operar sobre paginas fisicas.");
     Expect(executor.GetLastPlanType() ==
                QueryPlanType::kFilteredSeqScan,
-           "El filtro por value debe usar el scan fisico.");
+           "El filtro por nombre debe usar el scan fisico.");
 
     Expect(bpm.GetPageCount() == pages_before_open,
            "Las consultas de lectura no deben crear paginas.");
@@ -135,8 +143,8 @@ void TestPhysicalTableAndPersistentIndex() {
   std::remove(db_file.c_str());
 }
 
-void TestLegacyCatalogMigration() {
-  const std::string db_file = "test_legacy_catalog.db";
+void TestIncompatibleCatalogVersion() {
+  const std::string db_file = "test_incompatible_catalog.db";
   std::remove(db_file.c_str());
 
   {
@@ -144,14 +152,12 @@ void TestLegacyCatalogMigration() {
     CARReplacer replacer(6);
     BufferPoolManager bpm(6, &disk_manager, &replacer);
     TableHeap table_heap(&bpm);
-    ExtensibleHashTable legacy_index(&bpm);
-    for (int key = 1; key <= 3; ++key) {
-      const std::optional<RID> rid =
-          table_heap.InsertTuple(key, key * 100);
-      Expect(rid.has_value() &&
-                 legacy_index.Insert(key, key * 100),
-             "Debe preparar el formato de indice anterior.");
-    }
+    ExtensibleHashTable hash_index(&bpm);
+    const PersonRecord person = BuildPerson(1);
+    const std::optional<RID> rid = table_heap.InsertTuple(person);
+    Expect(rid.has_value() &&
+               hash_index.Insert(person.id, rid->Encode()),
+           "Debe preparar un catalogo valido.");
     bpm.FlushAllPages();
   }
 
@@ -159,34 +165,28 @@ void TestLegacyCatalogMigration() {
     DiskManager disk_manager(db_file);
     char page[PAGE_SIZE];
     disk_manager.read_page(CATALOG_PAGE_ID, page);
-    const uint32_t legacy_version = LEGACY_CATALOG_VERSION;
-    std::memcpy(page + sizeof(uint32_t), &legacy_version,
-                sizeof(legacy_version));
+    const uint32_t incompatible_version = 2;
+    std::memcpy(page + sizeof(uint32_t), &incompatible_version,
+                sizeof(incompatible_version));
     disk_manager.write_page(CATALOG_PAGE_ID, page);
   }
 
+  bool rejected = false;
   {
-    DiskManager disk_manager(db_file);
-    CARReplacer replacer(6);
-    BufferPoolManager bpm(6, &disk_manager, &replacer);
-    TableHeap table_heap(&bpm);
-    ExtensibleHashTable rebuilt_index(&bpm);
-
-    Expect(rebuilt_index.IsNewlyCreated(),
-           "La migracion debe invalidar solo el indice antiguo.");
-    Expect(table_heap.GetTupleCount() == 3,
-           "La migracion debe conservar TableHeap.");
-    for (const LocatedRecord &record : table_heap.ReadAll()) {
-      Expect(rebuilt_index.Insert(record.key, record.rid.Encode()),
-             "Debe reconstruir key -> RID desde TableHeap.");
+    try {
+      DiskManager disk_manager(db_file);
+      CARReplacer replacer(6);
+      BufferPoolManager bpm(6, &disk_manager, &replacer);
+      TableHeap table_heap(&bpm);
+      (void)table_heap;
+    } catch (const std::runtime_error &error) {
+      rejected =
+          std::string(error.what()).find("incompatible") !=
+          std::string::npos;
     }
-
-    QueryExecutor executor("registros", &table_heap, &rebuilt_index);
-    const std::vector<Tuple> rows =
-        executor.Execute("SELECT * FROM registros WHERE id = 2;");
-    Expect(rows.size() == 1 && rows[0].value == 200,
-           "El indice migrado debe recuperar la fila fisica.");
   }
+  Expect(rejected,
+         "El catalogo v2 debe rechazarse sin reinterpretar sus paginas.");
 
   std::remove(db_file.c_str());
 }
@@ -197,7 +197,7 @@ int main() {
   std::cout << "=== PRUEBAS DE PERSISTENCIA FISICA ===\n";
 
   TestPhysicalTableAndPersistentIndex();
-  TestLegacyCatalogMigration();
+  TestIncompatibleCatalogVersion();
 
   if (failures != 0) {
     std::cerr << failures << " prueba(s) fallaron.\n";

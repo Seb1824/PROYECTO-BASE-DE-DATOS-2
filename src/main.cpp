@@ -28,7 +28,7 @@ void PrintHeader() {
 int main() {
   using namespace minisgbd;
 
-  const std::string db_file = "mini_sgbd.db";
+  const std::string db_file = "personas_sgbd.db";
 
   int exit_code = 0;
 
@@ -41,11 +41,12 @@ int main() {
       ExtensibleHashTable hash_index(&bpm);
 
       const std::vector<Tuple> seed_tuples = {
-          Tuple{101, 505},
-          Tuple{102, 510},
-          Tuple{103, 515},
-          Tuple{104, 520},
-          Tuple{105, 525},
+          Tuple{101, "Ana Torres", "Arequipa", "Ingeniera"},
+          Tuple{102, "Luis Mendoza", "Lima", "Medico"},
+          Tuple{103, "Carla Rojas", "Cusco", "Arquitecta"},
+          Tuple{104, "Diego Salazar", "Arequipa",
+                "Analista de Datos"},
+          Tuple{105, "Sofia Vargas", "Trujillo", "Abogada"},
       };
 
       if (table_heap.GetFirstPageId() == INVALID_PAGE_ID) {
@@ -56,30 +57,33 @@ int main() {
 
         for (const Tuple &tuple : seed_tuples) {
           const std::optional<RID> rid =
-              table_heap.InsertTuple(tuple.key, tuple.value);
+              table_heap.InsertTuple(tuple);
           if (!rid.has_value() ||
-              !hash_index.Insert(tuple.key, rid->Encode())) {
+              !hash_index.Insert(tuple.id, rid->Encode())) {
             throw std::runtime_error(
                 "No se pudo inicializar la tabla persistente.");
           }
         }
       } else if (hash_index.IsNewlyCreated()) {
         for (const LocatedRecord &record : table_heap.ReadAll()) {
-          if (!hash_index.Insert(record.key, record.rid.Encode())) {
+          if (!hash_index.Insert(
+                  record.person.id, record.rid.Encode())) {
             throw std::runtime_error(
                 "No se pudo reconstruir el indice persistente.");
           }
         }
       }
 
-      QueryExecutor executor("registros", &table_heap, &hash_index);
+      QueryExecutor executor("personas", &table_heap, &hash_index);
       QueryProfiler profiler(&executor, &bpm, &disk_manager);
+      profiler.SetVisualizationPath("build/query_profile.html");
 
       PrintHeader();
-      std::cout << "[INFO] Tabla 'registros' inicializada con "
+      std::cout << "[INFO] Tabla 'personas' inicializada con "
                 << table_heap.GetTupleCount() << " filas persistentes.\n";
-      std::cout << "[INFO] Indice hash disponible para las columnas key/id.\n";
+      std::cout << "[INFO] Indice hash persistente disponible para id.\n";
       std::cout << "[INFO] Archivo: " << db_file << "\n";
+      std::cout << "[INFO] Perfil visual: build/query_profile.html\n";
 
       exit_code = RunCli(std::cin, std::cout, &profiler);
       bpm.FlushAllPages();

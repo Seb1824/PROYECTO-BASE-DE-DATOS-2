@@ -15,26 +15,26 @@ IndexScanOperator::IndexScanOperator(ExtensibleHashTable *hash_index,
   }
 }
 
-void IndexScanOperator::Open() {
+void IndexScanOperator::DoOpen() {
   cursor_ = 0;
   results_.clear();
 
   int encoded_rid = 0;
   if (hash_index_->GetValue(search_key_, &encoded_rid)) {
     const RID rid = RID::Decode(encoded_rid);
-    int key = 0;
-    int value = 0;
-    if (!table_heap_->GetRecord(rid, &key, &value) || key != search_key_) {
+    PersonRecord person;
+    if (!table_heap_->GetRecord(rid, &person) ||
+        person.id != search_key_) {
       throw std::runtime_error(
           "El indice contiene un RID inexistente o inconsistente.");
     }
-    results_.push_back(Tuple{key, value});
+    results_.push_back(std::move(person));
   }
 
   initialized_ = true;
 }
 
-bool IndexScanOperator::Next(Tuple *tuple) {
+bool IndexScanOperator::DoNext(Tuple *tuple) {
   if (!initialized_ || tuple == nullptr || cursor_ >= results_.size()) {
     return false;
   }
@@ -44,7 +44,7 @@ bool IndexScanOperator::Next(Tuple *tuple) {
   return true;
 }
 
-void IndexScanOperator::Close() {
+void IndexScanOperator::DoClose() {
   initialized_ = false;
   results_.clear();
   cursor_ = 0;

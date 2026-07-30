@@ -43,18 +43,18 @@ void ExpectContains(const std::string &text, const std::string &expected,
 
 void TestInteractiveSession() {
   const std::vector<Tuple> tuples = {
-      Tuple{1, 100},
-      Tuple{2, 200},
-      Tuple{3, 200},
+      Tuple{1, "Ana", "Lima", "Ingeniera"},
+      Tuple{2, "Bruno", "Arequipa", "Medico"},
+      Tuple{3, "Carla", "Arequipa", "Arquitecta"},
   };
-  QueryExecutor executor("registros", tuples);
+  QueryExecutor executor("personas", tuples);
   QueryProfiler profiler(&executor);
 
   std::istringstream input(
       "\n"
-      "SELECT * FROM registros;\n"
-      "SELECT * FROM registros WHERE value = 200;\n"
-      "SELECT FROM registros;\n"
+      "SELECT * FROM personas;\n"
+      "SELECT * FROM personas WHERE ciudad = 'Arequipa';\n"
+      "SELECT FROM personas;\n"
       "help\n"
       "exit\n");
   std::ostringstream output;
@@ -63,7 +63,7 @@ void TestInteractiveSession() {
   const std::string session = output.str();
 
   Expect(result == 0, "La CLI debe finalizar con codigo cero.");
-  ExpectContains(session, "1           100",
+  ExpectContains(session, "Ana",
                  "SELECT debe imprimir la primera fila.");
   ExpectContains(session, "Filas: 3",
                  "SELECT sin WHERE debe informar tres filas.");
@@ -87,11 +87,11 @@ void TestInteractiveSession() {
                  "Una consulta invalida debe mostrar un error.");
   ExpectContains(session, "Comandos disponibles:",
                  "El comando help debe mostrar ayuda.");
-  ExpectContains(session, "INSERT INTO registros VALUES",
+  ExpectContains(session, "INSERT INTO personas VALUES",
                  "La ayuda debe documentar INSERT.");
-  ExpectContains(session, "UPDATE registros SET",
+  ExpectContains(session, "UPDATE personas SET",
                  "La ayuda debe documentar UPDATE.");
-  ExpectContains(session, "DELETE FROM registros",
+  ExpectContains(session, "DELETE FROM personas",
                  "La ayuda debe documentar DELETE.");
   ExpectContains(session, "Sesion finalizada.",
                  "El comando exit debe cerrar la sesion.");
@@ -107,25 +107,32 @@ void TestPersistentInsertSession() {
     BufferPoolManager bpm(10, &disk_manager, &replacer);
     TableHeap table_heap(&bpm);
     ExtensibleHashTable hash_index(&bpm);
-    QueryExecutor executor("registros", &table_heap, &hash_index);
+    QueryExecutor executor("personas", &table_heap, &hash_index);
     QueryProfiler profiler(&executor, &bpm, &disk_manager);
 
     std::istringstream input(
-        "INSERT INTO registros VALUES (106, 530);\n"
-        "SELECT value FROM registros WHERE id = 106;\n"
-        "UPDATE registros SET value = 535 WHERE id = 106;\n"
-        "SELECT key FROM registros WHERE value >= 535;\n"
-        "INSERT INTO registros VALUES (107, 540);\n"
-        "DELETE FROM registros WHERE id = 107;\n"
-        "INSERT INTO registros VALUES (106, 999);\n"
+        "INSERT INTO personas VALUES "
+        "(106, 'Ana Torres', 'Arequipa', 'Ingeniera');\n"
+        "SELECT nombre FROM personas WHERE id = 106;\n"
+        "UPDATE personas SET profesion = 'Arquitecta' "
+        "WHERE id = 106;\n"
+        "SELECT id, profesion FROM personas "
+        "WHERE profesion = 'Arquitecta';\n"
+        "INSERT INTO personas VALUES "
+        "(107, 'Luis Mendoza', 'Lima', 'Medico');\n"
+        "DELETE FROM personas WHERE id = 107;\n"
+        "INSERT INTO personas VALUES "
+        "(106, 'Duplicada', 'Lima', 'Medica');\n"
         "exit\n");
     std::ostringstream output;
 
     Expect(RunCli(input, output, &profiler) == 0,
            "La sesion con INSERT debe finalizar correctamente.");
     const std::string session = output.str();
-    ExpectContains(session, "Registro insertado: key=106, value=530",
+    ExpectContains(session, "Persona insertada: id=106",
                    "La CLI debe confirmar el registro insertado.");
+    ExpectContains(session, "Ana Torres",
+                   "La CLI debe imprimir campos de texto.");
     ExpectContains(session, "Plan: Insert",
                    "La CLI debe informar el plan de insercion.");
     ExpectContains(session, "Plan: IndexScan",
@@ -151,14 +158,15 @@ void TestPersistentInsertSession() {
     BufferPoolManager bpm(10, &disk_manager, &replacer);
     TableHeap table_heap(&bpm);
     ExtensibleHashTable hash_index(&bpm);
-    QueryExecutor executor("registros", &table_heap, &hash_index);
+    QueryExecutor executor("personas", &table_heap, &hash_index);
 
     const std::vector<Tuple> rows =
-        executor.Execute("SELECT * FROM registros WHERE id = 106;");
-    Expect(rows.size() == 1 && rows[0].value == 535,
+        executor.Execute("SELECT * FROM personas WHERE id = 106;");
+    Expect(rows.size() == 1 &&
+               rows[0].profesion == "Arquitecta",
            "INSERT y UPDATE de la CLI deben persistir al reiniciar.");
     Expect(executor.Execute(
-               "SELECT * FROM registros WHERE id = 107;")
+               "SELECT * FROM personas WHERE id = 107;")
                .empty(),
            "DELETE de la CLI debe persistir al reiniciar.");
   }
@@ -168,7 +176,7 @@ void TestPersistentInsertSession() {
 
 void TestEndOfInput() {
   const std::vector<Tuple> tuples;
-  QueryExecutor executor("registros", tuples);
+  QueryExecutor executor("personas", tuples);
   QueryProfiler profiler(&executor);
   std::istringstream input;
   std::ostringstream output;
@@ -178,12 +186,13 @@ void TestEndOfInput() {
 }
 
 void TestUtf8BomOnFirstCommand() {
-  const std::vector<Tuple> tuples = {Tuple{1, 100}};
-  QueryExecutor executor("registros", tuples);
+  const std::vector<Tuple> tuples = {
+      Tuple{1, "Ana", "Lima", "Ingeniera"}};
+  QueryExecutor executor("personas", tuples);
   QueryProfiler profiler(&executor);
   std::istringstream input(
       "\xEF\xBB\xBF"
-      "SELECT * FROM registros;\n"
+      "SELECT * FROM personas;\n"
       "exit\n");
   std::ostringstream output;
 

@@ -18,12 +18,12 @@ FilterOperator::FilterOperator(Operator *child, Predicate predicate)
   }
 }
 
-void FilterOperator::Open() {
+void FilterOperator::DoOpen() {
   child_->Open();
   initialized_ = true;
 }
 
-bool FilterOperator::Next(Tuple *tuple) {
+bool FilterOperator::DoNext(Tuple *tuple) {
   if (!initialized_ || tuple == nullptr) {
     return false;
   }
@@ -39,7 +39,7 @@ bool FilterOperator::Next(Tuple *tuple) {
   return false;
 }
 
-void FilterOperator::Close() {
+void FilterOperator::DoClose() {
   if (initialized_) {
     child_->Close();
   }

@@ -240,6 +240,47 @@ void TestRepeatedEvictionsPreserveAllPages() {
   std::remove(db_file.c_str());
 }
 
+void TestCarSnapshotsAndEvents() {
+  CARReplacer replacer(2);
+  std::vector<CAREvent> events;
+  replacer.SetEventObserver(
+      [&events](const CAREvent &event) { events.push_back(event); });
+
+  replacer.RecordInsertion(10, 0);
+  replacer.Unpin(0, false);
+
+  frame_id_t accessed_frame = INVALID_FRAME_ID;
+  Expect(replacer.RecordAccess(10, &accessed_frame),
+         "La pagina residente debe producir un hit observable.");
+
+  frame_id_t victim = INVALID_FRAME_ID;
+  Expect(replacer.Victim(&victim) && victim == 0,
+         "CAR debe expulsar la pagina despues de su segunda oportunidad.");
+
+  const CARStateSnapshot snapshot = replacer.GetSnapshot();
+  Expect(snapshot.t1.empty() && snapshot.t2.empty(),
+         "La victima no debe permanecer en las listas residentes.");
+  Expect(snapshot.b2.size() == 1 && snapshot.b2[0] == 10,
+         "La pagina frecuente expulsada debe quedar en B2.");
+  Expect(snapshot.hits == 1 && snapshot.misses == 0,
+         "El snapshot debe exponer los contadores CAR.");
+
+  bool observed_hit = false;
+  bool observed_promotion = false;
+  bool observed_eviction = false;
+  for (const CAREvent &event : events) {
+    observed_hit = observed_hit || event.type == "HIT";
+    observed_promotion =
+        observed_promotion || event.type == "PROMOTE_T1_T2";
+    observed_eviction =
+        observed_eviction || event.type == "EVICT_T2_B2";
+  }
+  Expect(observed_hit && observed_promotion && observed_eviction,
+         "El observador debe capturar hit, promocion y expulsion.");
+
+  replacer.ClearEventObserver();
+}
+
 void TestInvalidBufferPoolConfiguration() {
   const std::string db_file = "test_invalid_buffer_pool.db";
   std::remove(db_file.c_str());
@@ -277,6 +318,7 @@ int main() {
   TestDirtyPageSurvivesEviction();
   TestDestructorFlushesDirtyPages();
   TestRepeatedEvictionsPreserveAllPages();
+  TestCarSnapshotsAndEvents();
   TestInvalidBufferPoolConfiguration();
 
   if (failures != 0) {

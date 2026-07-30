@@ -30,10 +30,20 @@ void Expect(bool condition, const std::string &message) {
 
 std::vector<Tuple> BuildTuples() {
   return {
-      Tuple{1, 100},
-      Tuple{2, 200},
-      Tuple{3, 200},
+      Tuple{1, "Ana", "Lima", "Ingeniera"},
+      Tuple{2, "Bruno", "Arequipa", "Medico"},
+      Tuple{3, "Carla", "Arequipa", "Arquitecta"},
   };
+}
+
+bool HasTimelinePhase(const ProfiledQueryResult &result,
+                      const std::string &phase) {
+  for (const TimelineEvent &event : result.trace.timeline) {
+    if (event.phase == phase) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void TestDiskIoCounters() {
@@ -79,17 +89,18 @@ void TestProfiledIndexAndSequentialQueries() {
 
     for (const Tuple &tuple : BuildTuples()) {
       const std::optional<RID> rid =
-          table_heap.InsertTuple(tuple.key, tuple.value);
+          table_heap.InsertTuple(tuple);
       Expect(rid.has_value() &&
-                 hash_index.Insert(tuple.key, rid->Encode()),
+                 hash_index.Insert(tuple.id, rid->Encode()),
              "Debe inicializar el indice para el profiler.");
     }
 
-    QueryExecutor executor("registros", &table_heap, &hash_index);
+    QueryExecutor executor("personas", &table_heap, &hash_index);
     QueryProfiler profiler(&executor, &bpm, &disk_manager);
+    profiler.SetTracingEnabled(true);
 
     const ProfiledQueryResult index_result =
-        profiler.Execute("SELECT * FROM registros WHERE id = 2;");
+        profiler.Execute("SELECT * FROM personas WHERE id = 2;");
 
     Expect(index_result.rows.size() == 1,
            "La consulta indexada debe devolver una fila.");
@@ -106,18 +117,36 @@ void TestProfiledIndexAndSequentialQueries() {
                index_result.metrics.disk_reads +
                    index_result.metrics.disk_writes,
            "El costo de I/O debe ser lecturas mas escrituras.");
+    Expect(index_result.trace.operators.size() == 1 &&
+               index_result.trace.operators[0].name == "IndexScan",
+           "El perfil debe registrar el nodo fisico IndexScan.");
+    Expect(HasTimelinePhase(index_result, "Open") &&
+               HasTimelinePhase(index_result, "Next") &&
+               HasTimelinePhase(index_result, "Close"),
+           "El perfil debe capturar la linea temporal Volcano.");
+    Expect(!index_result.trace.car_events.empty(),
+           "La consulta fisica debe capturar estados CAR.");
 
     const ProfiledQueryResult sequential_result =
-        profiler.Execute("SELECT * FROM registros WHERE value = 200;");
+        profiler.Execute(
+            "SELECT * FROM personas WHERE ciudad = 'Arequipa';");
 
     Expect(sequential_result.rows.size() == 2,
            "La consulta filtrada debe devolver dos filas.");
     Expect(sequential_result.plan_type == QueryPlanType::kFilteredSeqScan,
-           "La consulta por value debe registrar escaneo filtrado.");
+           "La consulta por ciudad debe registrar escaneo filtrado.");
     Expect(sequential_result.metrics.buffer_hits > 0,
            "El scan fisico debe registrar accesos al Buffer Pool.");
     Expect(sequential_result.metrics.io_operations == 0,
            "Las paginas calientes no deben producir I/O adicional.");
+    Expect(sequential_result.trace.operators.size() == 2 &&
+               sequential_result.trace.operators[0].name == "Filter" &&
+               sequential_result.trace.operators[1].name == "SeqScan",
+           "El perfil debe conservar la jerarquia Filter -> SeqScan.");
+    Expect(sequential_result.trace.operators[1].rows_out == 3,
+           "SeqScan debe contabilizar todas las filas producidas.");
+    Expect(sequential_result.trace.operators[0].rows_out == 2,
+           "Filter debe contabilizar solo las filas filtradas.");
   }
 
   std::remove(db_file.c_str());
@@ -125,11 +154,12 @@ void TestProfiledIndexAndSequentialQueries() {
 
 void TestProfilerWithoutStorageMetrics() {
   const std::vector<Tuple> tuples = BuildTuples();
-  QueryExecutor executor("registros", tuples);
+  QueryExecutor executor("personas", tuples);
   QueryProfiler profiler(&executor);
+  profiler.SetTracingEnabled(true);
 
   const ProfiledQueryResult result =
-      profiler.Execute("SELECT * FROM registros;");
+      profiler.Execute("SELECT * FROM personas;");
 
   Expect(result.rows.size() == tuples.size(),
          "El profiler debe funcionar sin fuentes de metricas.");
@@ -137,6 +167,11 @@ void TestProfilerWithoutStorageMetrics() {
              result.metrics.buffer_misses == 0 &&
              result.metrics.io_operations == 0,
          "Las metricas opcionales deben quedar en cero.");
+  Expect(result.trace.operators.size() == 1 &&
+             result.trace.operators[0].name == "SeqScan",
+         "El perfil en memoria tambien debe incluir el plan fisico.");
+  Expect(result.trace.car_events.empty(),
+         "Sin Buffer Pool no deben inventarse estados CAR.");
 }
 
 void TestInvalidProfiler() {

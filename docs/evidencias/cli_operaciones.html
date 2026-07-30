@@ -25,39 +25,39 @@
     <div class="meta">Ejecución real sobre TableHeap físico e índice RID persistente</div>
   </header>
   <main>
-    <div class="block"><span class="prompt">mini-sgbd&gt; INSERT INTO registros VALUES (106, 530);</span>
-<span class="ok">Registro insertado: key=106, value=530
+    <div class="block"><span class="prompt">mini-sgbd&gt; INSERT INTO personas VALUES (106, 'Valeria Quispe', 'Arequipa', 'Ingeniera de Software');</span>
+<span class="ok">Persona insertada: id=106, nombre='Valeria Quispe', ciudad='Arequipa', profesion='Ingeniera de Software'
 Filas afectadas: 1</span>
 <span class="plan">Plan: Insert</span></div>
-    <div class="block"><span class="prompt">mini-sgbd&gt; SELECT * FROM registros WHERE id = 106;</span>
-key         value
-------------------------
-106         530
+    <div class="block"><span class="prompt">mini-sgbd&gt; SELECT * FROM personas WHERE id = 106;</span>
+id   nombre          ciudad     profesion
+---  --------------  ---------  ---------------------
+106  Valeria Quispe  Arequipa   Ingeniera de Software
 Filas: 1
 <span class="plan">Plan: IndexScan</span>
 Buffer hits: 4     Buffer misses: 0     Costo I/O: 0</div>
-    <div class="block"><span class="prompt">mini-sgbd&gt; SELECT key, value FROM registros WHERE value &gt;= 520;</span>
-key         value
-------------------------
-104         520
-105         525
-106         530
+    <div class="block"><span class="prompt">mini-sgbd&gt; SELECT nombre, profesion FROM personas WHERE ciudad = 'Arequipa';</span>
+nombre          profesion
+--------------  ---------------------
+Ana Torres      Ingeniera
+Diego Salazar   Analista de Datos
+Valeria Quispe  Ingeniera de Software
 Filas: 3
 <span class="plan">Plan: Filter + SeqScan</span></div>
-    <div class="block"><span class="prompt">mini-sgbd&gt; UPDATE registros SET value = 535 WHERE id = 106;</span>
+    <div class="block"><span class="prompt">mini-sgbd&gt; UPDATE personas SET profesion = 'Arquitecta de Software' WHERE id = 106;</span>
 <span class="mut">Filas actualizadas: 1</span>
 <span class="plan">Plan: Update</span>
 
-<span class="prompt">mini-sgbd&gt; SELECT value FROM registros WHERE id = 106;</span>
-value
-------------
-535
+<span class="prompt">mini-sgbd&gt; SELECT profesion FROM personas WHERE id = 106;</span>
+profesion
+----------------------
+Arquitecta de Software
 <span class="plan">Plan: IndexScan</span></div>
-    <div class="block"><span class="prompt">mini-sgbd&gt; DELETE FROM registros WHERE id = 104;</span>
+    <div class="block"><span class="prompt">mini-sgbd&gt; DELETE FROM personas WHERE id = 104;</span>
 <span class="mut">Filas eliminadas: 1</span>
 <span class="plan">Plan: Delete</span>
 
-<span class="prompt">mini-sgbd&gt; SELECT * FROM registros WHERE id = 104;</span>
+<span class="prompt">mini-sgbd&gt; SELECT * FROM personas WHERE id = 104;</span>
 Sin resultados.
 <span class="plan">Plan: IndexScan</span></div>
   </main>

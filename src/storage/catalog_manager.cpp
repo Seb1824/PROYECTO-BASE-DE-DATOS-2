@@ -36,13 +36,17 @@ void CatalogManager::EnsureCatalog() {
 
   auto *catalog = reinterpret_cast<CatalogPage *>(page->get_data());
   const bool is_valid = catalog->IsValid();
-  const bool is_legacy = catalog->IsLegacyVersion();
-  if (is_legacy) {
-    catalog->MigrateLegacyIndexToRid();
-  }
-  buffer_pool_->UnpinPage(CATALOG_PAGE_ID, is_legacy);
+  const bool has_known_magic = catalog->HasKnownMagic();
+  const uint32_t version = catalog->GetVersion();
+  buffer_pool_->UnpinPage(CATALOG_PAGE_ID, false);
 
-  if (!is_valid && !is_legacy) {
+  if (!is_valid) {
+    if (has_known_magic) {
+      throw std::runtime_error(
+          "La version " + std::to_string(version) +
+          " del archivo es incompatible con el esquema personas "
+          "(catalogo v" + std::to_string(CATALOG_VERSION) + ").");
+    }
     throw std::runtime_error(
         "El archivo no contiene un catalogo Mini-SGBD valido.");
   }

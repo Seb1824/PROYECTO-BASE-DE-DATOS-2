@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
-#include <functional>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <unordered_set>
@@ -14,10 +14,15 @@
 #include "query/parser.h"
 #include "query/projection_operator.h"
 #include "query/seq_scan_operator.h"
-#include "storage/table_page.h"
 
 namespace minisgbd {
 namespace {
+
+const std::vector<std::string> &AllColumns() {
+  static const std::vector<std::string> columns{
+      "id", "nombre", "ciudad", "profesion"};
+  return columns;
+}
 
 std::string ToLower(std::string text) {
   std::transform(text.begin(), text.end(), text.begin(),
@@ -29,20 +34,20 @@ std::string ToLower(std::string text) {
 
 std::string NormalizeColumn(const std::string &column) {
   const std::string normalized = ToLower(column);
-  if (normalized == "key" || normalized == "id") {
-    return "key";
-  }
-  if (normalized == "value" || normalized == "valor") {
-    return "value";
+  if (normalized == "id" || normalized == "nombre" ||
+      normalized == "ciudad" || normalized == "profesion") {
+    return normalized;
   }
   throw std::invalid_argument("Columna desconocida: " + column);
 }
 
-bool IsKeyColumn(const std::string &column) {
-  return NormalizeColumn(column) == "key";
+bool IsIdColumn(const std::string &column) {
+  return NormalizeColumn(column) == "id";
 }
 
-bool CompareValues(int actual, ComparisonOperator comparison, int expected) {
+template <typename Value>
+bool CompareValues(const Value &actual, ComparisonOperator comparison,
+                   const Value &expected) {
   switch (comparison) {
     case ComparisonOperator::kEqual:
       return actual == expected;
@@ -60,37 +65,112 @@ bool CompareValues(int actual, ComparisonOperator comparison, int expected) {
   return false;
 }
 
+std::string ComparisonText(ComparisonOperator comparison) {
+  switch (comparison) {
+    case ComparisonOperator::kEqual:
+      return "=";
+    case ComparisonOperator::kNotEqual:
+      return "!=";
+    case ComparisonOperator::kLess:
+      return "<";
+    case ComparisonOperator::kLessOrEqual:
+      return "<=";
+    case ComparisonOperator::kGreater:
+      return ">";
+    case ComparisonOperator::kGreaterOrEqual:
+      return ">=";
+  }
+  return "?";
+}
+
+std::string ValueText(const ScalarValue &value) {
+  if (std::holds_alternative<int>(value)) {
+    return std::to_string(std::get<int>(value));
+  }
+
+  std::string escaped;
+  for (const char character : std::get<std::string>(value)) {
+    escaped.push_back(character);
+    if (character == '\'') {
+      escaped.push_back('\'');
+    }
+  }
+  return "'" + escaped + "'";
+}
+
+std::string ConditionText(const Condition &condition) {
+  return NormalizeColumn(condition.column) + " " +
+         ComparisonText(condition.comparison) + " " +
+         ValueText(condition.value);
+}
+
+std::string JoinColumns(const std::vector<std::string> &columns) {
+  std::string joined;
+  for (std::size_t index = 0; index < columns.size(); ++index) {
+    if (index != 0) {
+      joined += ", ";
+    }
+    joined += columns[index];
+  }
+  return joined;
+}
+
+int RequireInteger(const ScalarValue &value,
+                   const std::string &column) {
+  if (!std::holds_alternative<int>(value)) {
+    throw std::invalid_argument(
+        "La columna " + column + " requiere un valor entero.");
+  }
+  return std::get<int>(value);
+}
+
+const std::string &RequireText(const ScalarValue &value,
+                               const std::string &column) {
+  if (!std::holds_alternative<std::string>(value)) {
+    throw std::invalid_argument(
+        "La columna " + column +
+        " requiere una cadena entre comillas simples.");
+  }
+  return std::get<std::string>(value);
+}
+
 FilterOperator::Predicate BuildPredicate(const Condition &condition) {
   const std::string column = NormalizeColumn(condition.column);
   const ComparisonOperator comparison = condition.comparison;
-  const int expected_value = condition.value;
 
-  if (column == "key") {
-    return [comparison, expected_value](const Tuple &tuple) {
-      return CompareValues(tuple.key, comparison, expected_value);
+  if (column == "id") {
+    const int expected = RequireInteger(condition.value, column);
+    return [comparison, expected](const Tuple &tuple) {
+      return CompareValues(tuple.id, comparison, expected);
     };
   }
-  return [comparison, expected_value](const Tuple &tuple) {
-    return CompareValues(tuple.value, comparison, expected_value);
+
+  const std::string expected = RequireText(condition.value, column);
+  if (column == "nombre") {
+    return [comparison, expected](const Tuple &tuple) {
+      return CompareValues(tuple.nombre, comparison, expected);
+    };
+  }
+  if (column == "ciudad") {
+    return [comparison, expected](const Tuple &tuple) {
+      return CompareValues(tuple.ciudad, comparison, expected);
+    };
+  }
+  return [comparison, expected](const Tuple &tuple) {
+    return CompareValues(tuple.profesion, comparison, expected);
   };
 }
 
-struct ProjectionSelection {
-  bool include_key{false};
-  bool include_value{false};
-  std::vector<std::string> columns;
-};
-
-ProjectionSelection BuildProjection(const SelectQuery &query) {
+std::vector<std::string> BuildProjection(const SelectQuery &query) {
   if (query.select_all) {
-    return ProjectionSelection{true, true, {"key", "value"}};
+    return AllColumns();
   }
   if (query.columns.empty()) {
     throw std::invalid_argument(
         "SELECT requiere al menos una columna.");
   }
 
-  ProjectionSelection selection;
+  std::vector<std::string> columns;
   std::unordered_set<std::string> seen;
   for (const std::string &column : query.columns) {
     const std::string normalized = NormalizeColumn(column);
@@ -98,14 +178,9 @@ ProjectionSelection BuildProjection(const SelectQuery &query) {
       throw std::invalid_argument(
           "SELECT contiene una columna duplicada: " + column);
     }
-    selection.columns.push_back(normalized);
-    if (normalized == "key") {
-      selection.include_key = true;
-    } else {
-      selection.include_value = true;
-    }
+    columns.push_back(normalized);
   }
-  return selection;
+  return columns;
 }
 
 void ValidateTable(const std::string &requested,
@@ -127,34 +202,51 @@ std::vector<LocatedRecord> FindMatchingRecords(
   }
 
   const FilterOperator::Predicate predicate = BuildPredicate(*where);
-  if (hash_index != nullptr && IsKeyColumn(where->column) &&
+  if (hash_index != nullptr && IsIdColumn(where->column) &&
       where->comparison == ComparisonOperator::kEqual) {
+    const int id = RequireInteger(where->value, "id");
     int encoded_rid = 0;
-    if (!hash_index->GetValue(where->value, &encoded_rid)) {
+    if (!hash_index->GetValue(id, &encoded_rid)) {
       return {};
     }
+
     const RID rid = RID::Decode(encoded_rid);
-    int key = 0;
-    int value = 0;
-    if (!table_heap->GetRecord(rid, &key, &value) ||
-        key != where->value) {
+    PersonRecord person;
+    if (!table_heap->GetRecord(rid, &person) || person.id != id) {
       throw std::runtime_error(
           "El indice contiene un RID inconsistente.");
     }
-    const Tuple tuple{key, value};
-    if (predicate(tuple)) {
-      return {LocatedRecord{rid, key, value}};
+    if (predicate(person)) {
+      return {LocatedRecord{rid, person}};
     }
     return {};
   }
 
   std::vector<LocatedRecord> matches;
   for (const LocatedRecord &record : table_heap->ReadAll()) {
-    if (predicate(Tuple{record.key, record.value})) {
+    if (predicate(record.person)) {
       matches.push_back(record);
     }
   }
   return matches;
+}
+
+PersonRecord BuildInsertedPerson(const InsertQuery &query) {
+  PersonRecord person{
+      query.id, query.nombre, query.ciudad, query.profesion};
+  ValidatePersonRecord(person);
+  return person;
+}
+
+void AssignTextColumn(PersonRecord *person, const std::string &column,
+                      const std::string &value) {
+  if (column == "nombre") {
+    person->nombre = value;
+  } else if (column == "ciudad") {
+    person->ciudad = value;
+  } else {
+    person->profesion = value;
+  }
 }
 
 }  // namespace
@@ -202,13 +294,17 @@ std::vector<Tuple> QueryExecutor::Execute(const std::string &sql) {
 
 std::vector<Tuple> QueryExecutor::Execute(const SelectQuery &query) {
   ValidateTable(query.table, table_name_);
-  const ProjectionSelection selection = BuildProjection(query);
-  last_output_columns_ = selection.columns;
+  const std::vector<std::string> selection = BuildProjection(query);
+  last_output_columns_ = selection;
 
   std::unique_ptr<Operator> source;
   std::unique_ptr<FilterOperator> filter;
   std::unique_ptr<ProjectionOperator> projection;
   Operator *root = nullptr;
+  std::string source_name;
+  std::string source_detail;
+  std::string filter_detail;
+
   auto make_seq_scan = [this]() -> std::unique_ptr<Operator> {
     if (table_heap_ != nullptr) {
       return std::make_unique<SeqScanOperator>(table_heap_);
@@ -220,13 +316,21 @@ std::vector<Tuple> QueryExecutor::Execute(const SelectQuery &query) {
     source = make_seq_scan();
     root = source.get();
     last_plan_type_ = QueryPlanType::kSeqScan;
+    source_name = "SeqScan";
+    source_detail = "tabla=" + table_name_ +
+                    (table_heap_ != nullptr ? "; origen=TableHeap"
+                                            : "; origen=memoria");
   } else if (table_heap_ != nullptr && hash_index_ != nullptr &&
-             IsKeyColumn(query.where->column) &&
+             IsIdColumn(query.where->column) &&
              query.where->comparison == ComparisonOperator::kEqual) {
+    const int id = RequireInteger(query.where->value, "id");
     source = std::make_unique<IndexScanOperator>(
-        hash_index_, table_heap_, query.where->value);
+        hash_index_, table_heap_, id);
     root = source.get();
     last_plan_type_ = QueryPlanType::kIndexScan;
+    source_name = "IndexScan";
+    source_detail =
+        "indice=hash extensible; id = " + std::to_string(id);
   } else {
     FilterOperator::Predicate predicate = BuildPredicate(*query.where);
     source = make_seq_scan();
@@ -234,12 +338,36 @@ std::vector<Tuple> QueryExecutor::Execute(const SelectQuery &query) {
         std::make_unique<FilterOperator>(source.get(), std::move(predicate));
     root = filter.get();
     last_plan_type_ = QueryPlanType::kFilteredSeqScan;
+    source_name = "SeqScan";
+    source_detail = "tabla=" + table_name_ +
+                    (table_heap_ != nullptr ? "; origen=TableHeap"
+                                            : "; origen=memoria");
+    filter_detail = ConditionText(*query.where);
   }
 
   if (!query.select_all) {
-    projection = std::make_unique<ProjectionOperator>(
-        root, selection.include_key, selection.include_value);
+    projection =
+        std::make_unique<ProjectionOperator>(root, selection);
     root = projection.get();
+  }
+
+  if (tracer_ != nullptr) {
+    int parent_id = -1;
+    if (projection != nullptr) {
+      const int projection_id = tracer_->RegisterOperator(
+          "Projection", "columnas=" + JoinColumns(selection), parent_id);
+      projection->AttachTrace(tracer_, projection_id);
+      parent_id = projection_id;
+    }
+    if (filter != nullptr) {
+      const int filter_id =
+          tracer_->RegisterOperator("Filter", filter_detail, parent_id);
+      filter->AttachTrace(tracer_, filter_id);
+      parent_id = filter_id;
+    }
+    const int source_id =
+        tracer_->RegisterOperator(source_name, source_detail, parent_id);
+    source->AttachTrace(tracer_, source_id);
   }
 
   std::vector<Tuple> results;
@@ -259,26 +387,34 @@ std::vector<Tuple> QueryExecutor::Execute(const SelectQuery &query) {
 
 std::vector<Tuple> QueryExecutor::Execute(const InsertQuery &query) {
   ValidateTable(query.table, table_name_);
+  const PersonRecord person = BuildInsertedPerson(query);
+  const auto trace_start = ExecutionTracer::Clock::now();
+  const int trace_operator_id =
+      tracer_ != nullptr
+          ? tracer_->RegisterOperator(
+                "Insert", "tabla=" + table_name_ + "; id=" +
+                              std::to_string(person.id))
+          : -1;
+
   if (table_heap_ == nullptr || hash_index_ == nullptr) {
     throw std::invalid_argument(
         "INSERT requiere una tabla fisica y un indice persistente.");
   }
 
   int existing_rid = 0;
-  if (hash_index_->GetValue(query.key, &existing_rid)) {
-    throw std::invalid_argument("La clave " + std::to_string(query.key) +
-                                " ya existe.");
+  if (hash_index_->GetValue(person.id, &existing_rid)) {
+    throw std::invalid_argument(
+        "El id " + std::to_string(person.id) + " ya existe.");
   }
 
-  const std::optional<RID> rid =
-      table_heap_->InsertTuple(query.key, query.value);
+  const std::optional<RID> rid = table_heap_->InsertTuple(person);
   if (!rid.has_value()) {
     throw std::runtime_error(
         "No se pudo insertar el registro en la tabla fisica.");
   }
 
   try {
-    if (!hash_index_->Insert(query.key, rid->Encode())) {
+    if (!hash_index_->Insert(person.id, rid->Encode())) {
       if (!table_heap_->RollbackInsert(*rid)) {
         throw std::runtime_error(
             "Fallo el indice y no se pudo revertir TableHeap.");
@@ -288,101 +424,133 @@ std::vector<Tuple> QueryExecutor::Execute(const InsertQuery &query) {
     }
   } catch (...) {
     int indexed_rid = 0;
-    if (!hash_index_->GetValue(query.key, &indexed_rid)) {
+    if (!hash_index_->GetValue(person.id, &indexed_rid)) {
       table_heap_->RollbackInsert(*rid);
     }
     throw;
   }
 
   last_plan_type_ = QueryPlanType::kInsert;
-  last_output_columns_ = {"key", "value"};
-  return {Tuple{query.key, query.value}};
+  last_output_columns_ = AllColumns();
+  if (tracer_ != nullptr) {
+    tracer_->RecordOperatorEvent(
+        trace_operator_id, "Execute", trace_start,
+        ExecutionTracer::Clock::now(), 1);
+  }
+  return {person};
 }
 
 std::vector<Tuple> QueryExecutor::Execute(const UpdateQuery &query) {
   ValidateTable(query.table, table_name_);
+  const std::string target_column = NormalizeColumn(query.column);
+  const auto trace_start = ExecutionTracer::Clock::now();
+  const int trace_operator_id =
+      tracer_ != nullptr
+          ? tracer_->RegisterOperator(
+                "Update", "tabla=" + table_name_ + "; columna=" +
+                              target_column)
+          : -1;
+
   if (table_heap_ == nullptr || hash_index_ == nullptr) {
     throw std::invalid_argument(
         "UPDATE requiere una tabla fisica y un indice persistente.");
   }
 
-  const std::string target_column = NormalizeColumn(query.column);
   std::vector<LocatedRecord> matches =
       FindMatchingRecords(table_heap_, hash_index_, query.where);
   std::vector<Tuple> results;
   results.reserve(matches.size());
 
-  if (target_column == "key") {
-    if (query.value == TABLE_TOMBSTONE_KEY) {
-      throw std::invalid_argument(
-          "La clave minima de int esta reservada.");
-    }
+  if (target_column == "id") {
+    const int new_id = RequireInteger(query.value, target_column);
     if (matches.size() > 1) {
       throw std::invalid_argument(
-          "UPDATE de key solo puede afectar una fila para preservar "
+          "UPDATE de id solo puede afectar una fila para preservar "
           "la unicidad.");
     }
+
     if (!matches.empty()) {
       const LocatedRecord &record = matches.front();
-      if (record.key != query.value) {
+      PersonRecord updated = record.person;
+      updated.id = new_id;
+
+      if (record.person.id != new_id) {
         int existing_rid = 0;
-        if (hash_index_->GetValue(query.value, &existing_rid)) {
-          throw std::invalid_argument(
-              "La nueva clave ya existe.");
+        if (hash_index_->GetValue(new_id, &existing_rid)) {
+          throw std::invalid_argument("El nuevo id ya existe.");
         }
-        if (!hash_index_->Remove(record.key)) {
+        if (!hash_index_->Remove(record.person.id)) {
           throw std::runtime_error(
-              "No se encontro la clave anterior en el indice.");
+              "No se encontro el id anterior en el indice.");
         }
-        if (!table_heap_->UpdateRecord(
-                record.rid, query.value, record.value)) {
-          hash_index_->Insert(record.key, record.rid.Encode());
+        if (!table_heap_->UpdateRecord(record.rid, updated)) {
+          hash_index_->Insert(record.person.id, record.rid.Encode());
           throw std::runtime_error(
               "No se pudo actualizar la fila fisica.");
         }
         try {
-          if (!hash_index_->Insert(query.value, record.rid.Encode())) {
+          if (!hash_index_->Insert(new_id, record.rid.Encode())) {
             throw std::runtime_error(
-                "No se pudo insertar la nueva clave en el indice.");
+                "No se pudo insertar el nuevo id en el indice.");
           }
         } catch (...) {
-          table_heap_->UpdateRecord(
-              record.rid, record.key, record.value);
-          hash_index_->Insert(record.key, record.rid.Encode());
+          table_heap_->UpdateRecord(record.rid, record.person);
+          hash_index_->Insert(record.person.id, record.rid.Encode());
           throw;
         }
       }
-      results.push_back(Tuple{query.value, record.value});
+      results.push_back(std::move(updated));
     }
   } else {
+    const std::string new_value =
+        RequireText(query.value, target_column);
+    std::vector<PersonRecord> updated_rows;
+    updated_rows.reserve(matches.size());
+    for (const LocatedRecord &record : matches) {
+      PersonRecord updated = record.person;
+      AssignTextColumn(&updated, target_column, new_value);
+      ValidatePersonRecord(updated);
+      updated_rows.push_back(std::move(updated));
+    }
+
     std::size_t updated_count = 0;
     try {
-      for (const LocatedRecord &record : matches) {
+      for (std::size_t index = 0; index < matches.size(); ++index) {
         if (!table_heap_->UpdateRecord(
-                record.rid, record.key, query.value)) {
+                matches[index].rid, updated_rows[index])) {
           throw std::runtime_error(
               "No se pudo actualizar una fila fisica.");
         }
         ++updated_count;
-        results.push_back(Tuple{record.key, query.value});
+        results.push_back(updated_rows[index]);
       }
     } catch (...) {
       for (std::size_t index = 0; index < updated_count; ++index) {
-        const LocatedRecord &record = matches[index];
         table_heap_->UpdateRecord(
-            record.rid, record.key, record.value);
+            matches[index].rid, matches[index].person);
       }
       throw;
     }
   }
 
   last_plan_type_ = QueryPlanType::kUpdate;
-  last_output_columns_ = {"key", "value"};
+  last_output_columns_ = AllColumns();
+  if (tracer_ != nullptr) {
+    tracer_->RecordOperatorEvent(
+        trace_operator_id, "Execute", trace_start,
+        ExecutionTracer::Clock::now(), results.size());
+  }
   return results;
 }
 
 std::vector<Tuple> QueryExecutor::Execute(const DeleteQuery &query) {
   ValidateTable(query.table, table_name_);
+  const auto trace_start = ExecutionTracer::Clock::now();
+  const int trace_operator_id =
+      tracer_ != nullptr
+          ? tracer_->RegisterOperator("Delete", "tabla=" + table_name_)
+          : -1;
+
   if (table_heap_ == nullptr || hash_index_ == nullptr) {
     throw std::invalid_argument(
         "DELETE requiere una tabla fisica y un indice persistente.");
@@ -393,16 +561,16 @@ std::vector<Tuple> QueryExecutor::Execute(const DeleteQuery &query) {
   std::size_t removed_indexes = 0;
   try {
     for (const LocatedRecord &record : matches) {
-      if (!hash_index_->Remove(record.key)) {
+      if (!hash_index_->Remove(record.person.id)) {
         throw std::runtime_error(
-            "No se encontro una clave de TableHeap en el indice.");
+            "No se encontro un id de TableHeap en el indice.");
       }
       ++removed_indexes;
     }
   } catch (...) {
     for (std::size_t index = 0; index < removed_indexes; ++index) {
       hash_index_->Insert(
-          matches[index].key, matches[index].rid.Encode());
+          matches[index].person.id, matches[index].rid.Encode());
     }
     throw;
   }
@@ -419,11 +587,10 @@ std::vector<Tuple> QueryExecutor::Execute(const DeleteQuery &query) {
   } catch (...) {
     for (std::size_t index = 0; index < deleted_records; ++index) {
       const LocatedRecord &record = matches[index];
-      table_heap_->RestoreRecord(
-          record.rid, record.key, record.value);
+      table_heap_->RestoreRecord(record.rid, record.person);
     }
     for (const LocatedRecord &record : matches) {
-      hash_index_->Insert(record.key, record.rid.Encode());
+      hash_index_->Insert(record.person.id, record.rid.Encode());
     }
     throw;
   }
@@ -431,10 +598,15 @@ std::vector<Tuple> QueryExecutor::Execute(const DeleteQuery &query) {
   std::vector<Tuple> results;
   results.reserve(matches.size());
   for (const LocatedRecord &record : matches) {
-    results.push_back(Tuple{record.key, record.value});
+    results.push_back(record.person);
   }
   last_plan_type_ = QueryPlanType::kDelete;
-  last_output_columns_ = {"key", "value"};
+  last_output_columns_ = AllColumns();
+  if (tracer_ != nullptr) {
+    tracer_->RecordOperatorEvent(
+        trace_operator_id, "Execute", trace_start,
+        ExecutionTracer::Clock::now(), results.size());
+  }
   return results;
 }
 
@@ -442,8 +614,13 @@ QueryPlanType QueryExecutor::GetLastPlanType() const {
   return last_plan_type_;
 }
 
-const std::vector<std::string> &QueryExecutor::GetLastOutputColumns() const {
+const std::vector<std::string> &
+QueryExecutor::GetLastOutputColumns() const {
   return last_output_columns_;
+}
+
+void QueryExecutor::SetExecutionTracer(ExecutionTracer *tracer) {
+  tracer_ = tracer;
 }
 
 }  // namespace minisgbd

@@ -1,10 +1,9 @@
 #pragma once
 
+#include "storage/person_record.h"
+
 namespace minisgbd {
 
-struct Tuple {
-  int key{0};
-  int value{0};
-};
+using Tuple = PersonRecord;
 
 }  // namespace minisgbd

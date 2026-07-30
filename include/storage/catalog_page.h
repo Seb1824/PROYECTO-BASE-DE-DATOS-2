@@ -8,8 +8,7 @@ namespace minisgbd {
 
 constexpr page_id_t CATALOG_PAGE_ID = 0;
 constexpr uint32_t CATALOG_MAGIC = 0x4D534744;
-constexpr uint32_t CATALOG_VERSION = 2;
-constexpr uint32_t LEGACY_CATALOG_VERSION = 1;
+constexpr uint32_t CATALOG_VERSION = 3;
 
 class CatalogPage {
  public:
@@ -26,15 +25,11 @@ class CatalogPage {
     return magic_ == CATALOG_MAGIC && version_ == CATALOG_VERSION;
   }
 
-  bool IsLegacyVersion() const {
-    return magic_ == CATALOG_MAGIC &&
-           version_ == LEGACY_CATALOG_VERSION;
+  bool HasKnownMagic() const {
+    return magic_ == CATALOG_MAGIC;
   }
 
-  void MigrateLegacyIndexToRid() {
-    version_ = CATALOG_VERSION;
-    index_directory_page_id_ = INVALID_PAGE_ID;
-  }
+  uint32_t GetVersion() const { return version_; }
 
   page_id_t GetTableFirstPageId() const { return table_first_page_id_; }
   page_id_t GetTableLastPageId() const { return table_last_page_id_; }

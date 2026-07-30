@@ -28,15 +28,12 @@ TableHeap::TableHeap(BufferPoolManager *buffer_pool)
   }
 }
 
-bool TableHeap::Insert(int key, int value) {
-  return InsertTuple(key, value).has_value();
+bool TableHeap::Insert(const PersonRecord &person) {
+  return InsertTuple(person).has_value();
 }
 
-std::optional<RID> TableHeap::InsertTuple(int key, int value) {
-  if (key == TABLE_TOMBSTONE_KEY) {
-    throw std::invalid_argument(
-        "La clave minima de int esta reservada para borrados internos.");
-  }
+std::optional<RID> TableHeap::InsertTuple(const PersonRecord &person) {
+  ValidatePersonRecord(person);
   if (tuple_count_ == std::numeric_limits<uint32_t>::max()) {
     throw std::overflow_error(
         "La tabla alcanzo el maximo numero de registros.");
@@ -52,7 +49,7 @@ std::optional<RID> TableHeap::InsertTuple(int key, int value) {
     auto *table_page = reinterpret_cast<TablePage *>(page->get_data());
     table_page->Init();
     uint32_t slot = 0;
-    table_page->Insert(key, value, &slot);
+    table_page->Insert(person, &slot);
     buffer_pool_->UnpinPage(new_page_id, true);
 
     first_page_id_ = new_page_id;
@@ -71,7 +68,7 @@ std::optional<RID> TableHeap::InsertTuple(int key, int value) {
   auto *table_page =
       reinterpret_cast<TablePage *>(last_page->get_data());
   uint32_t slot = 0;
-  if (table_page->Insert(key, value, &slot)) {
+  if (table_page->Insert(person, &slot)) {
     buffer_pool_->UnpinPage(last_page_id_, true);
     ++tuple_count_;
     catalog_.UpdateTable(first_page_id_, last_page_id_, tuple_count_);
@@ -89,7 +86,7 @@ std::optional<RID> TableHeap::InsertTuple(int key, int value) {
   auto *new_table_page =
       reinterpret_cast<TablePage *>(new_page->get_data());
   new_table_page->Init();
-  new_table_page->Insert(key, value, &slot);
+  new_table_page->Insert(person, &slot);
   buffer_pool_->UnpinPage(new_page_id, true);
 
   last_page = buffer_pool_->FetchPage(last_page_id_);
@@ -111,8 +108,8 @@ bool TableHeap::RollbackInsert(const RID &rid) {
   return DeleteRecord(rid);
 }
 
-bool TableHeap::GetRecord(const RID &rid, int *key, int *value) {
-  if (!rid.IsValid() || key == nullptr || value == nullptr ||
+bool TableHeap::GetRecord(const RID &rid, PersonRecord *person) {
+  if (!rid.IsValid() || person == nullptr ||
       rid.page_id >= buffer_pool_->GetPageCount()) {
     return false;
   }
@@ -128,15 +125,15 @@ bool TableHeap::GetRecord(const RID &rid, int *key, int *value) {
     return false;
   }
 
-  const TableRecord record = table_page->GetRecord(rid.slot);
-  *key = record.key;
-  *value = record.value;
+  *person = table_page->GetRecord(rid.slot);
   buffer_pool_->UnpinPage(rid.page_id, false);
   return true;
 }
 
-bool TableHeap::UpdateRecord(const RID &rid, int key, int value) {
-  if (!rid.IsValid() || key == TABLE_TOMBSTONE_KEY ||
+bool TableHeap::UpdateRecord(const RID &rid,
+                             const PersonRecord &person) {
+  ValidatePersonRecord(person);
+  if (!rid.IsValid() ||
       rid.page_id >= buffer_pool_->GetPageCount()) {
     return false;
   }
@@ -146,7 +143,7 @@ bool TableHeap::UpdateRecord(const RID &rid, int key, int value) {
     return false;
   }
   auto *table_page = reinterpret_cast<TablePage *>(page->get_data());
-  const bool updated = table_page->Update(rid.slot, key, value);
+  const bool updated = table_page->Update(rid.slot, person);
   buffer_pool_->UnpinPage(rid.page_id, updated);
   return updated;
 }
@@ -176,8 +173,10 @@ bool TableHeap::DeleteRecord(const RID &rid) {
   return true;
 }
 
-bool TableHeap::RestoreRecord(const RID &rid, int key, int value) {
-  if (!rid.IsValid() || key == TABLE_TOMBSTONE_KEY ||
+bool TableHeap::RestoreRecord(const RID &rid,
+                              const PersonRecord &person) {
+  ValidatePersonRecord(person);
+  if (!rid.IsValid() ||
       rid.page_id >= buffer_pool_->GetPageCount() ||
       tuple_count_ == std::numeric_limits<uint32_t>::max()) {
     return false;
@@ -188,7 +187,7 @@ bool TableHeap::RestoreRecord(const RID &rid, int key, int value) {
     return false;
   }
   auto *table_page = reinterpret_cast<TablePage *>(page->get_data());
-  const bool restored = table_page->Restore(rid.slot, key, value);
+  const bool restored = table_page->Restore(rid.slot, person);
   buffer_pool_->UnpinPage(rid.page_id, restored);
   if (!restored) {
     return false;
@@ -221,9 +220,9 @@ std::vector<LocatedRecord> TableHeap::ReadAll() {
         reinterpret_cast<const TablePage *>(page->get_data());
     for (uint32_t slot = 0; slot < table_page->GetSize(); ++slot) {
       if (!table_page->IsDeleted(slot)) {
-        const TableRecord record = table_page->GetRecord(slot);
+        const PersonRecord person = table_page->GetRecord(slot);
         records.push_back(LocatedRecord{
-            RID{page_id, slot}, record.key, record.value});
+            RID{page_id, slot}, person});
       }
     }
     const page_id_t next_page_id = table_page->GetNextPageId();

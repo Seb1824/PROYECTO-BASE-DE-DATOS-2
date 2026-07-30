@@ -1,22 +1,25 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include "query/operator.h"
 
 namespace minisgbd {
 
 class ProjectionOperator : public Operator {
  public:
-  ProjectionOperator(Operator *child, bool include_key, bool include_value);
+  ProjectionOperator(Operator *child, std::vector<std::string> columns);
   ~ProjectionOperator() override = default;
 
-  void Open() override;
-  bool Next(Tuple *tuple) override;
-  void Close() override;
+ protected:
+  void DoOpen() override;
+  bool DoNext(Tuple *tuple) override;
+  void DoClose() override;
 
  private:
   Operator *child_;
-  bool include_key_;
-  bool include_value_;
+  std::vector<std::string> columns_;
   bool initialized_{false};
 };
 

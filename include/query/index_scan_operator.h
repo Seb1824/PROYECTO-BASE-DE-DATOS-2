@@ -15,9 +15,10 @@ class IndexScanOperator : public Operator {
                     int search_key);
   ~IndexScanOperator() override = default;
 
-  void Open() override;
-  bool Next(Tuple *tuple) override;
-  void Close() override;
+ protected:
+  void DoOpen() override;
+  bool DoNext(Tuple *tuple) override;
+  void DoClose() override;
 
  private:
   ExtensibleHashTable *hash_index_;

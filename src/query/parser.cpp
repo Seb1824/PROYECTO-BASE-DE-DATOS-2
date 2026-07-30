@@ -3,6 +3,7 @@
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace minisgbd {
@@ -23,30 +24,60 @@ int ParseInteger(const std::string &text, const std::string &context) {
 
 const std::regex &SelectPattern() {
   static const std::regex pattern(
-      R"(^\s*SELECT\s+(\*|[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|<>|<=|>=|<|>)\s*([+-]?[0-9]+))?\s*;?\s*$)",
+      R"(^\s*SELECT\s+(\*|[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|<>|<=|>=|<|>)\s*([+-]?[0-9]+|'(?:[^']|'')*'))?\s*;?\s*$)",
       std::regex_constants::icase);
   return pattern;
 }
 
 const std::regex &InsertPattern() {
   static const std::regex pattern(
-      R"(^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)\s+VALUES\s*\(\s*([+-]?[0-9]+)\s*,\s*([+-]?[0-9]+)\s*\)\s*;?\s*$)",
+      R"(^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)\s+VALUES\s*\(\s*([+-]?[0-9]+)\s*,\s*('(?:[^']|'')*')\s*,\s*('(?:[^']|'')*')\s*,\s*('(?:[^']|'')*')\s*\)\s*;?\s*$)",
       std::regex_constants::icase);
   return pattern;
 }
 
 const std::regex &UpdatePattern() {
   static const std::regex pattern(
-      R"(^\s*UPDATE\s+([A-Za-z_][A-Za-z0-9_]*)\s+SET\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([+-]?[0-9]+)(?:\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|<>|<=|>=|<|>)\s*([+-]?[0-9]+))?\s*;?\s*$)",
+      R"(^\s*UPDATE\s+([A-Za-z_][A-Za-z0-9_]*)\s+SET\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([+-]?[0-9]+|'(?:[^']|'')*')(?:\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|<>|<=|>=|<|>)\s*([+-]?[0-9]+|'(?:[^']|'')*'))?\s*;?\s*$)",
       std::regex_constants::icase);
   return pattern;
 }
 
 const std::regex &DeletePattern() {
   static const std::regex pattern(
-      R"(^\s*DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|<>|<=|>=|<|>)\s*([+-]?[0-9]+))?\s*;?\s*$)",
+      R"(^\s*DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|<>|<=|>=|<|>)\s*([+-]?[0-9]+|'(?:[^']|'')*'))?\s*;?\s*$)",
       std::regex_constants::icase);
   return pattern;
+}
+
+std::string ParseStringLiteral(const std::string &text,
+                               const std::string &context) {
+  if (text.size() < 2 || text.front() != '\'' ||
+      text.back() != '\'') {
+    throw std::invalid_argument(
+        context + " debe ser una cadena entre comillas simples.");
+  }
+
+  std::string value;
+  value.reserve(text.size() - 2);
+  for (std::size_t index = 1; index + 1 < text.size(); ++index) {
+    if (text[index] == '\'' && index + 1 < text.size() - 1 &&
+        text[index + 1] == '\'') {
+      value.push_back('\'');
+      ++index;
+    } else {
+      value.push_back(text[index]);
+    }
+  }
+  return value;
+}
+
+ScalarValue ParseLiteral(const std::string &text,
+                         const std::string &context) {
+  if (!text.empty() && text.front() == '\'') {
+    return ParseStringLiteral(text, context);
+  }
+  return ParseInteger(text, context);
 }
 
 ComparisonOperator ParseComparison(const std::string &text) {
@@ -80,7 +111,7 @@ Condition ParseCondition(const std::smatch &match, std::size_t column_index,
   condition.comparison =
       ParseComparison(match[comparison_index].str());
   condition.value =
-      ParseInteger(match[value_index].str(), context);
+      ParseLiteral(match[value_index].str(), context);
   return condition;
 }
 
@@ -132,8 +163,13 @@ QueryStatement Parser::ParseStatement(const std::string &sql) {
   if (std::regex_match(sql, match, InsertPattern())) {
     InsertQuery query;
     query.table = match[1].str();
-    query.key = ParseInteger(match[2].str(), "La clave de INSERT");
-    query.value = ParseInteger(match[3].str(), "El valor de INSERT");
+    query.id = ParseInteger(match[2].str(), "El id de INSERT");
+    query.nombre =
+        ParseStringLiteral(match[3].str(), "El nombre de INSERT");
+    query.ciudad =
+        ParseStringLiteral(match[4].str(), "La ciudad de INSERT");
+    query.profesion =
+        ParseStringLiteral(match[5].str(), "La profesion de INSERT");
     return query;
   }
 
@@ -142,7 +178,7 @@ QueryStatement Parser::ParseStatement(const std::string &sql) {
     query.table = match[1].str();
     query.column = match[2].str();
     query.value =
-        ParseInteger(match[3].str(), "El valor de SET");
+        ParseLiteral(match[3].str(), "El valor de SET");
     if (match[4].matched) {
       query.where =
           ParseCondition(match, 4, 5, 6, "El valor de WHERE");
@@ -163,7 +199,7 @@ QueryStatement Parser::ParseStatement(const std::string &sql) {
   throw std::invalid_argument(
       "Sentencia invalida. Formatos esperados: "
       "SELECT columnas FROM tabla [WHERE condicion]; "
-      "INSERT INTO tabla VALUES (clave, valor); "
+      "INSERT INTO tabla VALUES (id, 'nombre', 'ciudad', 'profesion'); "
       "UPDATE tabla SET columna = valor [WHERE condicion]; o "
       "DELETE FROM tabla [WHERE condicion];");
 }

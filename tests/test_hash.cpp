@@ -38,8 +38,11 @@ void TestIndexScanOperator(ExtensibleHashTable *hash_index,
 
     Expect(found_scan.Next(&tuple),
            "Next() debe encontrar una clave existente.");
-    Expect(tuple.key == 7, "El Tuple debe contener la clave buscada.");
-    Expect(tuple.value == 700, "El Tuple debe contener el valor indexado.");
+    Expect(tuple.id == 7, "El Tuple debe contener el id buscado.");
+    Expect(tuple.nombre == "Persona 7" &&
+               tuple.ciudad == "Lima" &&
+               tuple.profesion == "Profesion 7",
+           "IndexScan debe recuperar la persona completa desde TableHeap.");
     Expect(!found_scan.Next(&tuple),
            "El segundo Next() debe indicar el fin de los resultados.");
 
@@ -73,8 +76,13 @@ void RunTests() {
     // 2. Probar inserciones en el Índice Hash Extensible
     std::cout << "[Test] Insertando claves en el indice hash..." << std::endl;
     for (int i = 1; i <= 10; ++i) {
+        const PersonRecord person{
+            i,
+            "Persona " + std::to_string(i),
+            "Lima",
+            "Profesion " + std::to_string(i)};
         const std::optional<RID> rid =
-            table_heap.InsertTuple(i, i * 100);
+            table_heap.InsertTuple(person);
         bool inserted =
             rid.has_value() && hash_index.Insert(i, rid->Encode());
         Expect(inserted, "La insercion de una clave nueva debe ser exitosa.");
@@ -85,13 +93,13 @@ void RunTests() {
     int encoded_rid = 0;
     bool found = hash_index.GetValue(5, &encoded_rid);
     Expect(found, "La busqueda directa debe encontrar la clave 5.");
-    int found_key = 0;
-    int found_value = 0;
+    PersonRecord found_person;
     const RID rid = RID::Decode(encoded_rid);
-    Expect(table_heap.GetRecord(rid, &found_key, &found_value),
+    Expect(table_heap.GetRecord(rid, &found_person),
            "El RID debe apuntar a una fila fisica.");
-    Expect(found_key == 5 && found_value == 500,
-           "La clave 5 debe recuperar el valor 500 desde TableHeap.");
+    Expect(found_person.id == 5 &&
+               found_person.nombre == "Persona 5",
+           "El id 5 debe recuperar la persona desde TableHeap.");
     std::cout << " > Clave 5 encontrada en RID: "
               << rid.page_id << ":" << rid.slot << std::endl;
 

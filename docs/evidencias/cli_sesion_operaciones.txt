@@ -1,54 +1,45 @@
-MINI-SGBD - SESION 1: OPERACIONES Y PLANES
+=== SESION 1: OPERACIONES SOBRE PERSONAS ===
+[INFO] Tabla 'personas' inicializada con 5 filas persistentes.
+[INFO] Indice hash persistente disponible para id.
+[INFO] Archivo: personas_sgbd.db
 
-Base nueva inicializada con 5 filas.
-
-mini-sgbd> SELECT * FROM registros;
-101  505
-102  510
-103  515
-104  520
-105  525
-Filas: 5
-Plan: SeqScan
-
-mini-sgbd> INSERT INTO registros VALUES (106, 530);
-Registro insertado: key=106, value=530
+mini-sgbd> INSERT INTO personas VALUES (106, 'Valeria Quispe', 'Arequipa', 'Ingeniera de Software');
+Persona insertada: id=106, nombre='Valeria Quispe', ciudad='Arequipa', profesion='Ingeniera de Software'
 Filas afectadas: 1
 Plan: Insert
 
-mini-sgbd> SELECT * FROM registros WHERE id = 106;
-106  530
+mini-sgbd> SELECT * FROM personas WHERE id = 106;
+id   nombre          ciudad     profesion
+---  --------------  ---------  ---------------------
+106  Valeria Quispe  Arequipa   Ingeniera de Software
 Filas: 1
 Plan: IndexScan
-Buffer hits: 4
-Buffer misses: 0
 
-mini-sgbd> SELECT key, value FROM registros WHERE value >= 520;
-104  520
-105  525
-106  530
+mini-sgbd> SELECT nombre, profesion FROM personas WHERE ciudad = 'Arequipa';
+nombre          profesion
+--------------  ---------------------
+Ana Torres      Ingeniera
+Diego Salazar   Analista de Datos
+Valeria Quispe  Ingeniera de Software
 Filas: 3
 Plan: Filter + SeqScan
 
-mini-sgbd> UPDATE registros SET value = 535 WHERE id = 106;
+mini-sgbd> UPDATE personas SET profesion = 'Arquitecta de Software' WHERE id = 106;
 Filas actualizadas: 1
 Plan: Update
 
-mini-sgbd> SELECT value FROM registros WHERE id = 106;
-535
+mini-sgbd> SELECT profesion FROM personas WHERE id = 106;
+profesion
+----------------------
+Arquitecta de Software
 Filas: 1
 Plan: IndexScan
 
-mini-sgbd> INSERT INTO registros VALUES (107, 540);
-Registro insertado: key=107, value=540
-Filas afectadas: 1
-Plan: Insert
-
-mini-sgbd> DELETE FROM registros WHERE id = 104;
+mini-sgbd> DELETE FROM personas WHERE id = 104;
 Filas eliminadas: 1
 Plan: Delete
 
-mini-sgbd> SELECT * FROM registros WHERE id = 104;
+mini-sgbd> SELECT * FROM personas WHERE id = 104;
 Sin resultados.
+Filas: 0
 Plan: IndexScan
-

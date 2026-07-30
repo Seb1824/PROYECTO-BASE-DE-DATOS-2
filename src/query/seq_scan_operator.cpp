@@ -18,12 +18,12 @@ SeqScanOperator::SeqScanOperator(TableHeap *table_heap)
 }
 
 SeqScanOperator::~SeqScanOperator() {
-  Close();
+  DoClose();
 }
 
-void SeqScanOperator::Open() {
+void SeqScanOperator::DoOpen() {
   if (initialized_) {
-    Close();
+    DoClose();
   }
 
   cursor_ = 0;
@@ -34,7 +34,7 @@ void SeqScanOperator::Open() {
   }
 }
 
-bool SeqScanOperator::Next(Tuple *tuple) {
+bool SeqScanOperator::DoNext(Tuple *tuple) {
   if (!initialized_ || tuple == nullptr) {
     return false;
   }
@@ -59,8 +59,7 @@ bool SeqScanOperator::Next(Tuple *tuple) {
       if (table_page->IsDeleted(slot)) {
         continue;
       }
-      const TableRecord record = table_page->GetRecord(slot);
-      *tuple = Tuple{record.key, record.value};
+      *tuple = table_page->GetRecord(slot);
       return true;
     }
 
@@ -75,7 +74,7 @@ bool SeqScanOperator::Next(Tuple *tuple) {
   return false;
 }
 
-void SeqScanOperator::Close() {
+void SeqScanOperator::DoClose() {
   if (current_page_ != nullptr && table_heap_ != nullptr) {
     table_heap_->GetBufferPool()->UnpinPage(current_page_id_, false);
   }

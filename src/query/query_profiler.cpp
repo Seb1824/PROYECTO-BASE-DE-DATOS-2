@@ -1,8 +1,11 @@
 #include "query/query_profiler.h"
 
 #include <chrono>
+#include <memory>
 #include <stdexcept>
 #include <utility>
+
+#include "query/query_visualizer.h"
 
 namespace minisgbd {
 namespace {
@@ -35,9 +38,45 @@ ProfiledQueryResult QueryProfiler::Execute(const std::string &sql) {
   const uint64_t writes_before =
       disk_manager_ != nullptr ? disk_manager_->GetWriteCount() : 0;
 
+  std::unique_ptr<ExecutionTracer> tracer;
+  CARReplacer *replacer = nullptr;
+  if (tracing_enabled_) {
+    tracer = std::make_unique<ExecutionTracer>(sql);
+    replacer =
+        buffer_pool_ != nullptr ? buffer_pool_->GetReplacer() : nullptr;
+    if (replacer != nullptr) {
+      tracer->RecordCARSnapshot("INICIO", replacer->GetSnapshot());
+      ExecutionTracer *active_tracer = tracer.get();
+      replacer->SetEventObserver(
+          [active_tracer](const CAREvent &event) {
+            active_tracer->RecordCAREvent(event);
+          });
+    }
+    executor_->SetExecutionTracer(tracer.get());
+  }
+
   const auto start = std::chrono::steady_clock::now();
-  std::vector<Tuple> rows = executor_->Execute(sql);
+  std::vector<Tuple> rows;
+  try {
+    rows = executor_->Execute(sql);
+  } catch (...) {
+    if (tracer != nullptr) {
+      executor_->SetExecutionTracer(nullptr);
+      if (replacer != nullptr) {
+        replacer->ClearEventObserver();
+      }
+    }
+    throw;
+  }
   const auto end = std::chrono::steady_clock::now();
+
+  if (tracer != nullptr) {
+    executor_->SetExecutionTracer(nullptr);
+    if (replacer != nullptr) {
+      replacer->ClearEventObserver();
+      tracer->RecordCARSnapshot("FIN", replacer->GetSnapshot());
+    }
+  }
 
   const uint64_t hits_after =
       buffer_pool_ != nullptr ? buffer_pool_->GetHitCount() : 0;
@@ -70,7 +109,33 @@ ProfiledQueryResult QueryProfiler::Execute(const std::string &sql) {
   result.output_columns = executor_->GetLastOutputColumns();
   result.plan_type = executor_->GetLastPlanType();
   result.metrics = metrics;
+  if (tracer != nullptr) {
+    result.trace = tracer->Finish();
+  }
+  if (!visualization_path_.empty()) {
+    QueryVisualizer::WriteHtml(result, visualization_path_);
+    result.visualization_path = visualization_path_;
+  }
   return result;
+}
+
+void QueryProfiler::SetVisualizationPath(std::string path) {
+  visualization_path_ = std::move(path);
+  if (!visualization_path_.empty()) {
+    tracing_enabled_ = true;
+  }
+}
+
+const std::string &QueryProfiler::GetVisualizationPath() const {
+  return visualization_path_;
+}
+
+void QueryProfiler::SetTracingEnabled(bool enabled) {
+  tracing_enabled_ = enabled;
+}
+
+bool QueryProfiler::IsTracingEnabled() const {
+  return tracing_enabled_;
 }
 
 }  // namespace minisgbd

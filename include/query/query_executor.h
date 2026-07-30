@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "index/extensible_hash_table.h"
+#include "query/execution_trace.h"
 #include "query/query.h"
 #include "query/tuple.h"
 #include "storage/table_heap.h"
@@ -17,6 +18,7 @@ enum class QueryPlanType {
   kInsert,
   kUpdate,
   kDelete,
+  kCarDemo,
 };
 
 class QueryExecutor {
@@ -34,6 +36,7 @@ class QueryExecutor {
 
   QueryPlanType GetLastPlanType() const;
   const std::vector<std::string> &GetLastOutputColumns() const;
+  void SetExecutionTracer(ExecutionTracer *tracer);
 
  private:
   std::string table_name_;
@@ -41,7 +44,9 @@ class QueryExecutor {
   TableHeap *table_heap_{nullptr};
   ExtensibleHashTable *hash_index_;
   QueryPlanType last_plan_type_{QueryPlanType::kSeqScan};
-  std::vector<std::string> last_output_columns_{"key", "value"};
+  std::vector<std::string> last_output_columns_{
+      "id", "nombre", "ciudad", "profesion"};
+  ExecutionTracer *tracer_{nullptr};
 };
 
 }  // namespace minisgbd

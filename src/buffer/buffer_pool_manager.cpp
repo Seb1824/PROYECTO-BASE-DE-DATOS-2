@@ -227,4 +227,8 @@ double BufferPoolManager::GetHitRatio() const {
          static_cast<double>(total);
 }
 
+CARReplacer *BufferPoolManager::GetReplacer() const {
+  return replacer_;
+}
+
 }

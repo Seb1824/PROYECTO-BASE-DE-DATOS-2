@@ -23,40 +23,44 @@ void Expect(bool condition, const std::string &message) {
 
 void TestProjectionLifecycle() {
   const std::vector<Tuple> tuples = {
-      Tuple{1, 100},
-      Tuple{2, 200},
+      Tuple{1, "Ana", "Lima", "Ingeniera"},
+      Tuple{2, "Bruno", "Cusco", "Medico"},
   };
   SeqScanOperator scan(tuples);
-  ProjectionOperator key_projection(&scan, true, false);
+  ProjectionOperator identity_projection(
+      &scan, {"id", "nombre"});
   Tuple tuple;
 
-  Expect(!key_projection.Next(&tuple),
+  Expect(!identity_projection.Next(&tuple),
          "Next antes de Open debe retornar false.");
-  key_projection.Open();
-  Expect(key_projection.Next(&tuple) && tuple.key == 1 &&
-             tuple.value == 0,
-         "La proyeccion de key debe ocultar value.");
-  Expect(key_projection.Next(&tuple) && tuple.key == 2 &&
-             tuple.value == 0,
+  identity_projection.Open();
+  Expect(identity_projection.Next(&tuple) && tuple.id == 1 &&
+             tuple.nombre == "Ana" && tuple.ciudad.empty() &&
+             tuple.profesion.empty(),
+         "La proyeccion debe ocultar ciudad y profesion.");
+  Expect(identity_projection.Next(&tuple) && tuple.id == 2 &&
+             tuple.nombre == "Bruno",
          "La proyeccion debe conservar todas las filas.");
-  Expect(!key_projection.Next(&tuple),
+  Expect(!identity_projection.Next(&tuple),
          "Next debe terminar al consumir el operador hijo.");
-  key_projection.Close();
-  Expect(!key_projection.Next(&tuple),
+  identity_projection.Close();
+  Expect(!identity_projection.Next(&tuple),
          "Next despues de Close debe retornar false.");
 }
 
-void TestValueProjection() {
-  const std::vector<Tuple> tuples = {Tuple{7, 700}};
+void TestProfessionProjection() {
+  const std::vector<Tuple> tuples = {
+      Tuple{7, "Sofia", "Trujillo", "Abogada"}};
   SeqScanOperator scan(tuples);
-  ProjectionOperator value_projection(&scan, false, true);
-  value_projection.Open();
+  ProjectionOperator profession_projection(&scan, {"profesion"});
+  profession_projection.Open();
 
   Tuple tuple;
-  Expect(value_projection.Next(&tuple) && tuple.key == 0 &&
-             tuple.value == 700,
-         "La proyeccion de value debe ocultar key.");
-  value_projection.Close();
+  Expect(profession_projection.Next(&tuple) && tuple.id == 0 &&
+             tuple.nombre.empty() && tuple.ciudad.empty() &&
+             tuple.profesion == "Abogada",
+         "La proyeccion de profesion debe ocultar las otras columnas.");
+  profession_projection.Close();
 }
 
 }  // namespace
@@ -64,7 +68,7 @@ void TestValueProjection() {
 int main() {
   std::cout << "=== PRUEBAS DE PROJECTION OPERATOR ===\n";
   TestProjectionLifecycle();
-  TestValueProjection();
+  TestProfessionProjection();
 
   if (failures != 0) {
     std::cerr << failures << " prueba(s) fallaron.\n";
