@@ -14,6 +14,7 @@ set(ENGINE_SOURCES
     src/buffer/buffer_pool_manager.cpp
     src/buffer/page.cpp
     src/index/extensible_hash_table.cpp
+    src/query/filter_operator.cpp
     src/query/index_scan_operator.cpp
     src/query/parser.cpp
     src/query/seq_scan_operator.cpp
@@ -37,7 +38,14 @@ add_executable(test_seq_scan
     src/query/seq_scan_operator.cpp
 )
 
-# 6. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
+# 6. Definir las pruebas del operador de filtrado
+add_executable(test_filter
+    tests/test_filter.cpp
+    src/query/filter_operator.cpp
+    src/query/seq_scan_operator.cpp
+)
+
+# 7. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
 add_executable(benchmark_load src/benchmark/benchmark_load.cpp ${ENGINE_SOURCES})
 
 # Habilitar pruebas con CTest
@@ -45,3 +53,4 @@ enable_testing()
 add_test(NAME HashIndexTest COMMAND test_hash)
 add_test(NAME ParserTest COMMAND test_parser)
 add_test(NAME SeqScanTest COMMAND test_seq_scan)
+add_test(NAME FilterTest COMMAND test_filter)
