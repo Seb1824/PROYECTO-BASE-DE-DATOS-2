@@ -1,94 +1,73 @@
-#include <iostream>
 #include <cstdio>
+#include <exception>
+#include <iostream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
-#include "storage/disk_manager.h"
-#include "buffer/car_replacer.h"
 #include "buffer/buffer_pool_manager.h"
+#include "buffer/car_replacer.h"
 #include "index/extensible_hash_table.h"
-#include "query/index_scan_operator.h"
+#include "query/cli.h"
+#include "query/query_executor.h"
+#include "query/tuple.h"
+#include "storage/disk_manager.h"
 
-using namespace minisgbd;
+namespace {
 
 void PrintHeader() {
-    std::cout << "\n============================================\n";
-    std::cout << "      MINI-SGBD: DEMO INTERACTIVO DE MOTOR\n";
-    std::cout << "============================================\n";
+  std::cout << "\n============================================\n";
+  std::cout << "        MINI-SGBD: CLI DE CONSULTAS\n";
+  std::cout << "============================================\n";
 }
 
+}  // namespace
+
 int main() {
-    std::string db_file = "demo_engine.db";
-    std::remove(db_file.c_str());
+  using namespace minisgbd;
 
-    DiskManager disk_manager(db_file);
-    size_t pool_size = 10;
-    CARReplacer replacer(pool_size);
-    BufferPoolManager bpm(pool_size, &disk_manager, &replacer);
-    
-    ExtensibleHashTable hash_index(&bpm);
+  const std::string db_file = "mini_sgbd_cli.db";
+  std::remove(db_file.c_str());
 
-    PrintHeader();
-    std::cout << "[INFO] Motor inicializado correctamente en disco.\n";
-    std::cout << "[INFO] Gestor de Bufer (CAR) y Indice Hash listos.\n";
+  int exit_code = 0;
 
-    std::cout << "\n--------------------------------------------\n";
-    std::cout << ">> [PASO 1] Insertando registros en el indice...\n";
-    std::cout << "--------------------------------------------\n";
-    
-    for (int id = 101; id <= 105; ++id) {
-        page_id_t page_simulada = id * 5; 
-        bool exito = hash_index.Insert(id, page_simulada);
-        
-        if (exito) {
-            std::cout << "   -> Insertado con exito: Clave ID [" << id 
-                      << "] mapeada a Pagina Fisica [" << page_simulada << "]\n";
+  try {
+    {
+      DiskManager disk_manager(db_file);
+      CARReplacer replacer(10);
+      BufferPoolManager bpm(10, &disk_manager, &replacer);
+      ExtensibleHashTable hash_index(&bpm);
+
+      const std::vector<Tuple> tuples = {
+          Tuple{101, 505},
+          Tuple{102, 510},
+          Tuple{103, 515},
+          Tuple{104, 520},
+          Tuple{105, 525},
+      };
+
+      for (const Tuple &tuple : tuples) {
+        if (!hash_index.Insert(tuple.key, tuple.value)) {
+          throw std::runtime_error(
+              "No se pudo inicializar el indice de la CLI.");
         }
+      }
+
+      QueryExecutor executor("registros", tuples, &hash_index);
+
+      PrintHeader();
+      std::cout << "[INFO] Tabla 'registros' inicializada con "
+                << tuples.size() << " filas.\n";
+      std::cout << "[INFO] Indice hash disponible para las columnas key/id.\n";
+
+      exit_code = RunCli(std::cin, std::cout, &executor);
+      bpm.FlushAllPages();
     }
+  } catch (const std::exception &error) {
+    std::cerr << "[ERROR FATAL] " << error.what() << '\n';
+    exit_code = 1;
+  }
 
-    std::cout << "\n--------------------------------------------\n";
-    std::cout << ">> [PASO 2] Buscando una clave especifica...\n";
-    std::cout << "--------------------------------------------\n";
-    
-    int clave_a_buscar = 103;
-    page_id_t pagina_encontrada = 0;
-    
-    std::cout << "   Buscando Clave: " << clave_a_buscar << " ...\n";
-    bool encontrado = hash_index.GetValue(clave_a_buscar, &pagina_encontrada);
-
-    if (encontrado) {
-        std::cout << "   [RESULTADO] ¡Encontrado! La clave " << clave_a_buscar 
-                  << " apunta a la Pagina: " << pagina_encontrada << "\n";
-    } else {
-        std::cout << "   [RESULTADO] La clave no existe.\n";
-    }
-
-    std::cout << "\n--------------------------------------------\n";
-    std::cout << ">> [PASO 3] Ejecutando consulta con Modelo Volcano...\n";
-    std::cout << "--------------------------------------------\n";
-    
-    int clave_consulta = 104;
-    std::cout << "   Lanzando operador IndexScan para la clave: " << clave_consulta << "\n";
-    
-    IndexScanOperator scan_op(&hash_index, clave_consulta);
-    scan_op.Open();
-
-    Tuple resultado;
-    bool hay_datos = scan_op.Next(&resultado);
-
-    if (hay_datos) {
-        std::cout << "   [VOLCANO NEXT()] Registro recuperado -> Clave: "
-                  << resultado.key << " | PageID: " << resultado.value << "\n";
-    } else {
-        std::cout << "   [VOLCANO NEXT()] Fin del flujo (Sin resultados).\n";
-    }
-
-    scan_op.Close();
-
-    std::remove(db_file.c_str());
-    
-    std::cout << "\n========================\n";
-    std::cout << " FINALIZADO CON EXITO\n";
-    std::cout << "==========================\n";
-
-    return 0;
+  std::remove(db_file.c_str());
+  return exit_code;
 }
