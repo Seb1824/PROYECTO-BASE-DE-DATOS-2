@@ -1,127 +1,280 @@
-# Mini-SGBD en C++ con reemplazo adaptativo CAR y perfilado del costo de consultas
+# Mini-SGBD en C++ con reemplazo adaptativo CAR
 
-Proyecto universitario de Bases de Datos II: un Sistema Gestor de Base de Datos (SGBD) educativo escrito en C++, con almacenamiento en paginas fisicas, un buffer pool con el algoritmo de reemplazo adaptativo **CAR** (Clock with Adaptive Replacement) y un indice hash extensible mapeado sobre el gestor de paginas.
+Proyecto universitario de Bases de Datos II: un Sistema Gestor de Base de
+Datos educativo escrito en C++17. Integra almacenamiento en paginas fisicas
+de 4 KB, Buffer Pool con reemplazo CAR, indice hash extensible, operadores
+fisicos con Modelo Volcano, parser SQL, CLI y perfilado del costo de cada
+consulta.
 
-## Estado Actual
+## Estado actual
 
-El pipeline implementado hasta el momento es:
+El flujo principal del sistema es:
 
 ```text
-archivo .db (disco) -> DiskManager -> BufferPoolManager (CAR) -> ExtensibleHashTable -> IndexScanOperator (Volcano)
+SQL
+ |
+ v
+Parser -> SelectQuery -> QueryExecutor
+                           |
+              +------------+-------------+
+              |                          |
+              v                          v
+        IndexScanOperator       FilterOperator
+                                      |
+                                      v
+                               SeqScanOperator
+                           |
+                           v
+                     QueryProfiler
+                           |
+                           v
+                Resultados + tiempo + Buffer/I/O
 ```
 
-El avance actual incluye:
+El indice utiliza la siguiente ruta de almacenamiento:
 
-1. Gestor de almacenamiento (`DiskManager`) para lectura y escritura de paginas fisicas de tamano fijo.
-2. Abstraccion de pagina en memoria (`Page`) con control de pin count y dirty bit.
-3. Algoritmo de reemplazo adaptativo **CAR** (`CARReplacer`), con listas T1/T2 y listas fantasma B1/B2.
-4. `BufferPoolManager` como orquestador entre disco y el algoritmo de reemplazo, con contadores propios de hits/misses.
-5. Indice hash extensible (`ExtensibleHashTable`) con directorio dinamico y buckets, mapeado sobre el `BufferPoolManager`.
-6. Proteccion contra insercion de claves duplicadas (evita recursion infinita en el split de buckets).
-7. Operador fisico `IndexScanOperator` siguiendo el Modelo Volcano (`Open()`, `Next()`, `Close()`).
-8. Demo interactivo (`main.cpp`) que valida el flujo completo: insercion, busqueda puntual y ejecucion via Volcano.
-9. Suite de pruebas unitarias (`test_hash.cpp`) para el indice.
-10. Benchmark de carga masiva (`benchmark_load.cpp`) comparando busqueda "con indice" vs "sin indice" (escaneo secuencial), con exportacion a CSV.
-11. Script de graficacion (`plot_benchmark.py`) que genera la comparacion visual a partir del CSV.
+```text
+archivo .db -> DiskManager -> BufferPoolManager -> CARReplacer
+                                      |
+                                      v
+                           ExtensibleHashTable
+```
 
-## Estructura del Proyecto
+Funcionalidades implementadas:
+
+1. Paginas fisicas de tamano fijo (`PAGE_SIZE = 4096`).
+2. Lectura, escritura y asignacion de paginas mediante `DiskManager`.
+3. Contadores de lecturas y escrituras logicas de paginas.
+4. Buffer Pool con pin count, dirty bit, flush y metricas de hits/misses.
+5. Reemplazo adaptativo CAR con listas T1/T2 y listas fantasma B1/B2.
+6. Proteccion para impedir la expulsion de paginas fijadas.
+7. Sincronizacion automatica de paginas sucias al destruir el Buffer Pool.
+8. Indice hash extensible mapeado sobre paginas del Buffer Pool.
+9. Contrato comun de operadores Volcano: `Open()`, `Next()` y `Close()`.
+10. Operadores `IndexScanOperator`, `SeqScanOperator` y `FilterOperator`.
+11. Parser basico para sentencias `SELECT` con condicion `WHERE`.
+12. `QueryExecutor` con seleccion de plan indexado o secuencial.
+13. CLI interactiva para ejecutar consultas SQL.
+14. Profiler por consulta con tiempo, Buffer hits/misses, hit ratio e I/O.
+15. Benchmark de busqueda con indice frente a escaneo secuencial.
+
+## SQL soportado
+
+La version actual implementa intencionalmente un subconjunto pequeno:
+
+```sql
+SELECT * FROM registros;
+SELECT * FROM registros WHERE id = 103;
+SELECT * FROM registros WHERE key = 103;
+SELECT * FROM registros WHERE value = 515;
+SELECT * FROM registros WHERE valor = 515;
+```
+
+Las palabras clave SQL no distinguen mayusculas de minusculas. Las
+condiciones admiten igualdad con valores enteros positivos o negativos.
+
+Seleccion de plan:
+
+| Consulta | Plan |
+|---|---|
+| Sin `WHERE` | `SeqScan` |
+| `WHERE key/id = N` con indice | `IndexScan` |
+| `WHERE key/id = N` sin indice | `Filter + SeqScan` |
+| `WHERE value/valor = N` | `Filter + SeqScan` |
+
+## CLI y profiler
+
+Al iniciar `main_app`, el programa carga una tabla de demostracion llamada
+`registros` con cinco filas.
+
+```text
+mini-sgbd> SELECT * FROM registros WHERE id = 103;
+key         value
+--------------------
+103         515
+Filas: 1
+Plan: IndexScan
+Tiempo: 0.120 ms
+Buffer hits: 3
+Buffer misses: 0
+Hit ratio: 100.00 %
+Lecturas de disco: 0
+Escrituras de disco: 0
+Costo I/O: 0 operaciones de pagina
+```
+
+Comandos adicionales:
+
+```text
+help
+exit
+quit
+```
+
+Las metricas se calculan como diferencias antes y despues de cada consulta,
+por lo que no arrastran los contadores de consultas anteriores. El costo de
+I/O es la suma de lecturas y escrituras logicas de paginas. Una consulta
+atendida completamente desde el Buffer Pool puede reportar cero operaciones
+de disco.
+
+## Estructura del proyecto
 
 ```text
 PROYECTO-BASE-DE-DATOS-2/
-├── CMakeLists.txt
-├── .gitignore
-├── README.md
-├── include/
-│   ├── buffer/       (buffer_pool_manager.h, car_replacer.h, page.h)
-│   ├── index/         (extensible_hash_table.h, hash_bucket_page.h, hash_directory_page.h)
-│   ├── query/          (index_scan_operator.h)
-│   └── storage/        (disk_manager.h)
-├── src/
-│   ├── main.cpp          # Demo interactivo en consola
-│   ├── buffer/            (buffer_pool_manager.cpp, car_replacer.cpp, page.cpp)
-│   ├── index/              (extensible_hash_table.cpp)
-│   ├── query/               (index_scan_operator.cpp)
-│   ├── storage/               (disk_manager.cpp)
-│   └── benchmark/              (benchmark_load.cpp)
-├── tests/
-│   └── test_hash.cpp      # Suite de pruebas unitarias del indice
-├── docs/
-│   ├── resultados_benchmark.csv
-│   ├── plot_benchmark.py
-│   └── comparacion_busqueda.png
-└── data/                    # Carpeta para archivos .db generados
+|-- CMakeLists.txt
+|-- .gitignore
+|-- README.md
+|-- include/
+|   |-- storage/
+|   |-- buffer/
+|   |-- index/
+|   `-- query/
+|       |-- tuple.h
+|       |-- operator.h
+|       |-- query.h
+|       |-- parser.h
+|       |-- index_scan_operator.h
+|       |-- seq_scan_operator.h
+|       |-- filter_operator.h
+|       |-- query_executor.h
+|       |-- query_profiler.h
+|       `-- cli.h
+|-- src/
+|   |-- storage/
+|   |-- buffer/
+|   |-- index/
+|   |-- query/
+|   |-- benchmark/
+|   `-- main.cpp
+|-- tests/
+|   |-- test_hash.cpp
+|   |-- test_parser.cpp
+|   |-- test_seq_scan.cpp
+|   |-- test_filter.cpp
+|   |-- test_query_executor.cpp
+|   |-- test_cli.cpp
+|   |-- test_query_profiler.cpp
+|   `-- test_buffer_pool.cpp
+|-- docs/
+`-- data/
 ```
 
-## Componentes
+## Componentes principales
 
-### Modulo de Almacenamiento y Buffer (`storage/`, `buffer/`)
+### Almacenamiento y Buffer
 
-- `disk_manager.cpp/.h`: creacion de archivos de base de datos en disco, lectura y escritura de paginas fisicas de tamano fijo.
-- `page.cpp/.h`: abstraccion de pagina en memoria (pin count, dirty bit, datos crudos).
-- `car_replacer.cpp/.h`: implementacion del algoritmo **CAR**. Mantiene dos listas de paginas activas (T1, T2) y dos listas fantasma de historial (B1, B2) para adaptar dinamicamente el parametro `p`, que decide cuanto peso dar a recencia vs frecuencia al elegir que pagina expulsar.
-- `buffer_pool_manager.cpp/.h`: orquestador principal. Entrega paginas (`FetchPage`, `NewPage`, `UnpinPage`) coordinando el `DiskManager` y el `CARReplacer`. Expone contadores propios de **hits, misses y hit ratio** (`GetHitCount()`, `GetMissCount()`, `GetHitRatio()`), listos para usarse en el CLI Profiler.
+- `DiskManager`: administra el archivo binario, paginas de 4 KB y contadores
+  de lecturas/escrituras.
+- `Page`: contiene datos crudos, identificador, pin count y dirty bit.
+- `BufferPoolManager`: coordina memoria y disco, impide expulsar paginas
+  fijadas, escribe victimas sucias y realiza flush al finalizar.
+- `CARReplacer`: mantiene T1/T2 y B1/B2, adapta el parametro `p` y solo
+  devuelve frames expulsables.
 
-### Modulo de Indexacion (`index/`)
+### Indice
 
-- `extensible_hash_table.cpp/.h`: indice hash extensible con directorio dinamico y buckets. Usa el `BufferPoolManager` para pedir, modificar y persistir sus paginas — no vive aislado en RAM. Metodos clave: `Insert(clave, valor)` y `GetValue(clave, &valor)`.
-- Al insertar una clave que ya existe, `Insert()` la rechaza (retorna `false`) en vez de intentar dividir el bucket, evitando una recursion infinita cuando dos claves identicas nunca pueden separarse por hash.
-- `hash_bucket_page.h` / `hash_directory_page.h`: estructuras de pagina fisica para buckets y el directorio del indice.
+- `ExtensibleHashTable`: implementa insercion y busqueda por clave.
+- `HashDirectoryPage`: representa el directorio del hash.
+- `HashBucketPage`: almacena pares clave/valor dentro de una pagina.
 
-### Modulo de Consultas (`query/`) — parcialmente implementado
+### Procesamiento de consultas
 
-- `index_scan_operator.cpp/.h`: operador fisico que sigue el Modelo Volcano (`Open()`, `Next(RID*, int*)`, `Close()`) para iterar sobre el indice hash de forma estandar.
-- **Pendiente**: no existe todavia un Parser para `SELECT`/`WHERE`, ni operadores adicionales del modelo Volcano (por ejemplo, un `FilterOperator`). Solo esta implementado el escaneo por indice.
+- `Parser`: transforma SQL en `SelectQuery`.
+- `Operator`: interfaz comun del Modelo Volcano.
+- `IndexScanOperator`: busqueda puntual mediante el indice hash.
+- `SeqScanOperator`: recorre una coleccion de `Tuple`.
+- `FilterOperator`: aplica un predicado a otro operador Volcano.
+- `QueryExecutor`: crea el plan y recolecta los resultados.
+- `QueryProfiler`: mide tiempo, Buffer hits/misses e I/O por consulta.
+- `RunCli`: mantiene la sesion interactiva y presenta resultados/metricas.
 
-### Benchmark de Carga Masiva (`src/benchmark/`)
+## Compilacion
 
-- `benchmark_load.cpp`: compara el rendimiento de busqueda "con indice" (`ExtensibleHashTable`) vs "sin indice" (escaneo secuencial de paginas reutilizando `HashBucketPage` como heap), para multiples tamanos de N (1,000 a 100,000 registros).
-- Exporta resultados a `docs/resultados_benchmark.csv`: tiempo de insercion, tiempo de busqueda, hits, misses y hit ratio del `BufferPoolManager` para cada modo y tamano.
-- `docs/plot_benchmark.py` genera `docs/comparacion_busqueda.png` a partir del CSV (requiere `pandas` y `matplotlib`).
+Requisitos:
 
-**Hallazgo principal**: con `pool_size = 10`, existe un punto de cruce (*crossover*) alrededor de N=5,000-10,000 registros. Por debajo de ese umbral, el overhead de indireccion del hash (dos `FetchPage` por consulta: directorio + bucket) pesa mas que un escaneo lineal corto. Por encima, el indice escala de forma casi plana mientras que el escaneo secuencial se degrada fuertemente (hasta ~104x mas lento en N=100,000), principalmente porque el hit ratio del buffer pool colapsa en el escaneo secuencial a medida que crece N.
+- CMake 3.12 o superior.
+- Compilador compatible con C++17.
 
-## Configuracion de Compilacion (CMake)
+Configuracion y compilacion:
 
-Requiere CMake >= 3.12 y C++17. Se compila en Windows con MSVC (`cl.exe`). Existen tres targets independientes:
+```powershell
+cmake -S . -B build
+cmake --build build --config Debug
+```
 
-- **`main_app`**: demo interactivo de integracion completa.
-  ```powershell
-  cmake --build . --target main_app
-  .\Debug\main_app.exe
-  ```
-- **`test_hash`**: pruebas unitarias del indice.
-  ```powershell
-  cmake --build . --target test_hash
-  ctest -C Debug --output-on-failure
-  ```
-- **`benchmark_load`**: benchmark de carga masiva con indice vs sin indice.
-  ```powershell
-  cmake --build . --target benchmark_load
-  .\Debug\benchmark_load.exe
-  ```
+Ejecutar la CLI con un generador multiconfiguracion como Visual Studio:
 
-Todos los targets comparten el mismo conjunto de fuentes del motor (`ENGINE_SOURCES` en `CMakeLists.txt`).
+```powershell
+.\build\Debug\main_app.exe
+```
 
-## Pendientes 
+Con un generador de configuracion unica, el ejecutable suele quedar en:
 
-- Implementar un **Parser basico** para procesar sentencias `SELECT` y clausulas `WHERE`.
-- Disenar los **operadores fisicos restantes** del modelo Volcano (ademas de `IndexScanOperator`), por ejemplo un operador de filtro, siguiendo el mismo estandar `Open()`/`Next()`/`Close()`.
-- Construir el **CLI Profiler**: imprimir en pantalla el costo de las consultas usando los contadores ya disponibles en `BufferPoolManager` (`GetHitCount()`, `GetMissCount()`, `GetHitRatio()`) y medir el tiempo exacto de ejecucion.
+```powershell
+.\build\main_app.exe
+```
 
 ## Pruebas
 
-Ejecutar con CTest desde la carpeta de build:
+Ejecutar todas las pruebas:
 
 ```powershell
-ctest -C Debug --output-on-failure
+ctest --test-dir build -C Debug --output-on-failure
 ```
 
-Cobertura actual de pruebas:
+Suites registradas:
 
-- Insercion y busqueda basica en el indice hash extensible.
-- Manejo de division de buckets (split) al superar la capacidad.
-- Rechazo de claves duplicadas.
+- `HashIndexTest`
+- `ParserTest`
+- `SeqScanTest`
+- `FilterTest`
+- `QueryExecutorTest`
+- `CliTest`
+- `QueryProfilerTest`
+- `BufferPoolTest`
+
+`BufferPoolTest` valida especificamente:
+
+- Ninguna pagina fijada puede ser expulsada.
+- Un pin count mayor que cero bloquea el reemplazo.
+- `Victim()` retorna sin entrar en un bucle infinito.
+- Las paginas sucias se escriben al ser expulsadas.
+- El destructor sincroniza las paginas sucias restantes.
+
+## Benchmark
+
+`benchmark_load` compara busqueda mediante `ExtensibleHashTable` contra
+escaneo secuencial para diferentes cantidades de registros. El ejecutable
+genera `resultados_benchmark.csv` en su directorio de trabajo. En `docs/` se
+mantienen resultados y una grafica de referencia:
+
+```text
+docs/resultados_benchmark.csv
+docs/plot_benchmark.py
+docs/comparacion_busqueda.png
+```
+
+## Limitaciones y trabajo pendiente
+
+- `SeqScanOperator` recorre actualmente una coleccion de `Tuple` en memoria;
+  falta conectarlo a una estructura de tabla/heap almacenada en paginas.
+- El indice crea un directorio nuevo al iniciar y aun no recupera una pagina
+  raiz persistida entre ejecuciones.
+- El parser solo soporta `SELECT *` e igualdad con enteros.
+- No existen todavia `INSERT`, `UPDATE`, `DELETE`, joins ni proyecciones.
+- Falta ampliar las pruebas del indice para cubrir splits masivos,
+  profundidad maxima y recuperacion despues de reiniciar el proceso.
+- El directorio hash necesita limites explicitos antes de alcanzar la
+  capacidad maxima de una pagina.
 
 ## Resumen
 
-El nucleo de almacenamiento, buffer y el indice ya estan implementados, integrados y validados end-to-end mediante el demo (`main_app`) y el benchmark de carga masiva, que ademas confirma con datos reales el comportamiento asintotico esperado del indice frente a un escaneo secuencial. Lo que falta por desarrollar es la capa de procesamiento de consultas (parser, operadores adicionales y profiler).
+El proyecto ya dispone de un flujo funcional de extremo a extremo:
+
+```text
+SQL -> Parser -> Plan Volcano -> Ejecucion -> Resultados -> Profiler
+```
+
+El almacenamiento, Buffer Pool, CAR e indice sostienen las busquedas
+indexadas; la CLI permite observar cuantitativamente el plan, el tiempo, el
+comportamiento del Buffer Pool y el costo de I/O de cada consulta.
