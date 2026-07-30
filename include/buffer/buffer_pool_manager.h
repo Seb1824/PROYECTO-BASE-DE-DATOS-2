@@ -32,6 +32,7 @@ class BufferPoolManager {
   Page *NewPage(page_id_t *page_id);
 
   size_t GetPoolSize() const;
+  int GetPageCount() const;
 
   uint64_t GetHitCount() const;
   uint64_t GetMissCount() const;

@@ -44,19 +44,22 @@ Funcionalidades implementadas:
 
 1. Paginas fisicas de tamano fijo (`PAGE_SIZE = 4096`).
 2. Lectura, escritura y asignacion de paginas mediante `DiskManager`.
-3. Contadores de lecturas y escrituras logicas de paginas.
-4. Buffer Pool con pin count, dirty bit, flush y metricas de hits/misses.
-5. Reemplazo adaptativo CAR con listas T1/T2 y listas fantasma B1/B2.
-6. Proteccion para impedir la expulsion de paginas fijadas.
-7. Sincronizacion automatica de paginas sucias al destruir el Buffer Pool.
-8. Indice hash extensible mapeado sobre paginas del Buffer Pool.
-9. Contrato comun de operadores Volcano: `Open()`, `Next()` y `Close()`.
-10. Operadores `IndexScanOperator`, `SeqScanOperator` y `FilterOperator`.
-11. Parser basico para sentencias `SELECT` con condicion `WHERE`.
-12. `QueryExecutor` con seleccion de plan indexado o secuencial.
-13. CLI interactiva para ejecutar consultas SQL.
-14. Profiler por consulta con tiempo, Buffer hits/misses, hit ratio e I/O.
-15. Benchmark de busqueda con indice frente a escaneo secuencial.
+3. Catalogo persistente con las raices de tabla e indice.
+4. `TableHeap` enlazado para almacenar registros en paginas fisicas.
+5. Contadores de lecturas y escrituras logicas de paginas.
+6. Buffer Pool con pin count, dirty bit, flush y metricas de hits/misses.
+7. Reemplazo adaptativo CAR con listas T1/T2 y listas fantasma B1/B2.
+8. Proteccion para impedir la expulsion de paginas fijadas.
+9. Sincronizacion automatica de paginas sucias al destruir el Buffer Pool.
+10. Indice hash extensible persistente mapeado sobre el Buffer Pool.
+11. Recuperacion de tabla e indice al reabrir el archivo `.db`.
+12. Contrato comun de operadores Volcano: `Open()`, `Next()` y `Close()`.
+13. Operadores `IndexScanOperator`, `SeqScanOperator` y `FilterOperator`.
+14. Parser basico para sentencias `SELECT` con condicion `WHERE`.
+15. `QueryExecutor` con seleccion de plan indexado o secuencial.
+16. CLI interactiva para ejecutar consultas SQL.
+17. Profiler por consulta con tiempo, Buffer hits/misses, hit ratio e I/O.
+18. Benchmark de busqueda con indice frente a escaneo secuencial.
 
 ## SQL soportado
 
@@ -84,8 +87,10 @@ Seleccion de plan:
 
 ## CLI y profiler
 
-Al iniciar `main_app`, el programa carga una tabla de demostracion llamada
-`registros` con cinco filas.
+En la primera ejecucion, `main_app` crea `mini_sgbd.db` y carga una tabla de
+demostracion llamada `registros` con cinco filas. En las ejecuciones
+posteriores recupera la misma tabla y el mismo indice mediante la pagina de
+catalogo; no vuelve a crear sus paginas raiz.
 
 ```text
 mini-sgbd> SELECT * FROM registros WHERE id = 103;
@@ -126,6 +131,10 @@ PROYECTO-BASE-DE-DATOS-2/
 |-- README.md
 |-- include/
 |   |-- storage/
+|   |   |-- catalog_page.h
+|   |   |-- catalog_manager.h
+|   |   |-- table_page.h
+|   |   `-- table_heap.h
 |   |-- buffer/
 |   |-- index/
 |   `-- query/
@@ -165,6 +174,11 @@ PROYECTO-BASE-DE-DATOS-2/
 
 - `DiskManager`: administra el archivo binario, paginas de 4 KB y contadores
   de lecturas/escrituras.
+- `CatalogManager`: crea o recupera la pagina cero y mantiene las raices
+  persistentes de tabla e indice.
+- `TablePage`: almacena registros `key/value` y el enlace a la pagina
+  siguiente.
+- `TableHeap`: inserta registros en una cadena persistente de `TablePage`.
 - `Page`: contiene datos crudos, identificador, pin count y dirty bit.
 - `BufferPoolManager`: coordina memoria y disco, impide expulsar paginas
   fijadas, escribe victimas sucias y realiza flush al finalizar.
@@ -173,7 +187,8 @@ PROYECTO-BASE-DE-DATOS-2/
 
 ### Indice
 
-- `ExtensibleHashTable`: implementa insercion y busqueda por clave.
+- `ExtensibleHashTable`: implementa insercion y busqueda por clave. Su
+  `directory_page_id` se guarda en el catalogo y se recupera al reiniciar.
 - `HashDirectoryPage`: representa el directorio del hash.
 - `HashBucketPage`: almacena pares clave/valor dentro de una pagina.
 
@@ -182,7 +197,9 @@ PROYECTO-BASE-DE-DATOS-2/
 - `Parser`: transforma SQL en `SelectQuery`.
 - `Operator`: interfaz comun del Modelo Volcano.
 - `IndexScanOperator`: busqueda puntual mediante el indice hash.
-- `SeqScanOperator`: recorre una coleccion de `Tuple`.
+- `SeqScanOperator`: recorre directamente las paginas de `TableHeap` mediante
+  el Buffer Pool. Conserva ademas el constructor sobre `vector<Tuple>` para
+  pruebas unitarias aisladas.
 - `FilterOperator`: aplica un predicado a otro operador Volcano.
 - `QueryExecutor`: crea el plan y recolecta los resultados.
 - `QueryProfiler`: mide tiempo, Buffer hits/misses e I/O por consulta.
@@ -232,6 +249,7 @@ Suites registradas:
 - `CliTest`
 - `QueryProfilerTest`
 - `BufferPoolTest`
+- `PersistenceTest`
 
 `BufferPoolTest` valida especificamente:
 
@@ -256,14 +274,13 @@ docs/comparacion_busqueda.png
 
 ## Limitaciones y trabajo pendiente
 
-- `SeqScanOperator` recorre actualmente una coleccion de `Tuple` en memoria;
-  falta conectarlo a una estructura de tabla/heap almacenada en paginas.
-- El indice crea un directorio nuevo al iniciar y aun no recupera una pagina
-  raiz persistida entre ejecuciones.
+- El catalogo administra actualmente una sola tabla y un solo indice.
+- `TableHeap` es append-only: faltan borrado, actualizacion, reutilizacion de
+  espacio y una lista de paginas libres.
 - El parser solo soporta `SELECT *` e igualdad con enteros.
 - No existen todavia `INSERT`, `UPDATE`, `DELETE`, joins ni proyecciones.
 - Falta ampliar las pruebas del indice para cubrir splits masivos,
-  profundidad maxima y recuperacion despues de reiniciar el proceso.
+  profundidad maxima y recuperacion ante archivos danados.
 - El directorio hash necesita limites explicitos antes de alcanzar la
   capacidad maxima de una pagina.
 

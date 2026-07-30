@@ -200,6 +200,11 @@ size_t BufferPoolManager::GetPoolSize() const {
   return pool_size_;
 }
 
+int BufferPoolManager::GetPageCount() const {
+  std::lock_guard<std::mutex> lock(latch_);
+  return disk_manager_->get_num_pages();
+}
+
 uint64_t BufferPoolManager::GetHitCount() const {
   std::lock_guard<std::mutex> lock(latch_);
   return hit_count_;

@@ -1,23 +1,64 @@
 #include "index/extensible_hash_table.h"
+
 #include <functional>
+#include <stdexcept>
 #include <vector>
+
+#include "storage/catalog_manager.h"
+#include "storage/catalog_page.h"
 
 namespace minisgbd {
 
 ExtensibleHashTable::ExtensibleHashTable(BufferPoolManager *bpm) : bpm_(bpm) {
+  if (bpm_ == nullptr) {
+    throw std::invalid_argument(
+        "ExtensibleHashTable requiere un BufferPoolManager valido.");
+  }
+
+  CatalogManager catalog(bpm_);
+  const CatalogPage catalog_page = catalog.Read();
+  directory_page_id_ = catalog_page.GetIndexDirectoryPageId();
+
+  if (directory_page_id_ != INVALID_PAGE_ID) {
+    if (directory_page_id_ >= bpm_->GetPageCount()) {
+      throw std::runtime_error(
+          "El catalogo contiene una raiz de indice invalida.");
+    }
+    return;
+  }
+
   Page *dir_page = bpm_->NewPage(&directory_page_id_);
-  HashDirectoryPage *dir = reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
+  if (dir_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo crear el directorio del indice.");
+  }
+  auto *dir =
+      reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
   dir->Init(0);
-
-  page_id_t bucket_page_id;
-  Page *bucket_page = bpm_->NewPage(&bucket_page_id);
-  HashBucketPage *bucket = reinterpret_cast<HashBucketPage *>(bucket_page->get_data());
-  bucket->Init(0);
-
-  dir->SetBucketPageId(0, bucket_page_id);
-
-  bpm_->UnpinPage(bucket_page_id, true);
   bpm_->UnpinPage(directory_page_id_, true);
+
+  page_id_t bucket_page_id = INVALID_PAGE_ID;
+  Page *bucket_page = bpm_->NewPage(&bucket_page_id);
+  if (bucket_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo crear el bucket inicial del indice.");
+  }
+  auto *bucket =
+      reinterpret_cast<HashBucketPage *>(bucket_page->get_data());
+  bucket->Init(0);
+  bpm_->UnpinPage(bucket_page_id, true);
+
+  dir_page = bpm_->FetchPage(directory_page_id_);
+  if (dir_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo actualizar el directorio inicial.");
+  }
+  dir = reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
+  dir->SetBucketPageId(0, bucket_page_id);
+  bpm_->UnpinPage(directory_page_id_, true);
+
+  catalog.SetIndexDirectoryPageId(directory_page_id_);
+  newly_created_ = true;
 }
 
 uint32_t ExtensibleHashTable::Hash(KeyType key) const {
@@ -26,10 +67,15 @@ uint32_t ExtensibleHashTable::Hash(KeyType key) const {
 
 uint32_t ExtensibleHashTable::GetBucketIndex(KeyType key) const {
   Page *dir_page = bpm_->FetchPage(directory_page_id_);
-  HashDirectoryPage *dir = reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
+  if (dir_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo cargar el directorio del indice.");
+  }
+  auto *dir =
+      reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
 
   uint32_t hash_val = Hash(key);
-  uint32_t mask = (1 << dir->GetGlobalDepth()) - 1;
+  uint32_t mask = (1U << dir->GetGlobalDepth()) - 1U;
   uint32_t bucket_idx = hash_val & mask;
 
   bpm_->UnpinPage(directory_page_id_, false);
@@ -37,15 +83,29 @@ uint32_t ExtensibleHashTable::GetBucketIndex(KeyType key) const {
 }
 
 bool ExtensibleHashTable::GetValue(KeyType key, ValueType *result) {
+  if (result == nullptr) {
+    return false;
+  }
+
   uint32_t bucket_idx = GetBucketIndex(key);
 
   Page *dir_page = bpm_->FetchPage(directory_page_id_);
-  HashDirectoryPage *dir = reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
+  if (dir_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo cargar el directorio del indice.");
+  }
+  auto *dir =
+      reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
   page_id_t bucket_page_id = dir->GetBucketPageId(bucket_idx);
   bpm_->UnpinPage(directory_page_id_, false);
 
   Page *bucket_page = bpm_->FetchPage(bucket_page_id);
-  HashBucketPage *bucket = reinterpret_cast<HashBucketPage *>(bucket_page->get_data());
+  if (bucket_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo cargar un bucket del indice.");
+  }
+  auto *bucket =
+      reinterpret_cast<HashBucketPage *>(bucket_page->get_data());
 
   bool found = bucket->GetValue(key, result);
   bpm_->UnpinPage(bucket_page_id, false);
@@ -61,11 +121,22 @@ bool ExtensibleHashTable::Insert(KeyType key, ValueType value) {
   uint32_t bucket_idx = GetBucketIndex(key);
 
   Page *dir_page = bpm_->FetchPage(directory_page_id_);
-  HashDirectoryPage *dir = reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
+  if (dir_page == nullptr) {
+    throw std::runtime_error(
+        "No se pudo cargar el directorio para insertar.");
+  }
+  auto *dir =
+      reinterpret_cast<HashDirectoryPage *>(dir_page->get_data());
   page_id_t bucket_page_id = dir->GetBucketPageId(bucket_idx);
 
   Page *bucket_page = bpm_->FetchPage(bucket_page_id);
-  HashBucketPage *bucket = reinterpret_cast<HashBucketPage *>(bucket_page->get_data());
+  if (bucket_page == nullptr) {
+    bpm_->UnpinPage(directory_page_id_, false);
+    throw std::runtime_error(
+        "No se pudo cargar el bucket para insertar.");
+  }
+  auto *bucket =
+      reinterpret_cast<HashBucketPage *>(bucket_page->get_data());
 
   if (bucket->Insert(key, value)) {
     bpm_->UnpinPage(bucket_page_id, true);
@@ -77,6 +148,14 @@ bool ExtensibleHashTable::Insert(KeyType key, ValueType value) {
 
   if (local_depth == dir->GetGlobalDepth()) {
     int global_depth = dir->GetGlobalDepth();
+    const uint32_t expanded_size = 1U << (global_depth + 1);
+    if (expanded_size >
+        static_cast<uint32_t>(DIRECTORY_ARRAY_SIZE)) {
+      bpm_->UnpinPage(bucket_page_id, false);
+      bpm_->UnpinPage(directory_page_id_, false);
+      throw std::overflow_error(
+          "El directorio hash alcanzo la capacidad de una pagina.");
+    }
     dir->SetGlobalDepth(global_depth + 1);
     int current_dir_size = 1 << global_depth;
     for (int i = 0; i < current_dir_size; i++) {
@@ -86,7 +165,13 @@ bool ExtensibleHashTable::Insert(KeyType key, ValueType value) {
 
   page_id_t new_bucket_page_id;
   Page *new_bucket_page = bpm_->NewPage(&new_bucket_page_id);
-  HashBucketPage *new_bucket = reinterpret_cast<HashBucketPage *>(new_bucket_page->get_data());
+  if (new_bucket_page == nullptr) {
+    bpm_->UnpinPage(bucket_page_id, false);
+    bpm_->UnpinPage(directory_page_id_, false);
+    return false;
+  }
+  auto *new_bucket =
+      reinterpret_cast<HashBucketPage *>(new_bucket_page->get_data());
 
   bucket->SetLocalDepth(local_depth + 1);
   new_bucket->Init(local_depth + 1);
@@ -123,4 +208,12 @@ bool ExtensibleHashTable::Insert(KeyType key, ValueType value) {
   return Insert(key, value);
 }
 
-} 
+page_id_t ExtensibleHashTable::GetDirectoryPageId() const {
+  return directory_page_id_;
+}
+
+bool ExtensibleHashTable::IsNewlyCreated() const {
+  return newly_created_;
+}
+
+}  // namespace minisgbd

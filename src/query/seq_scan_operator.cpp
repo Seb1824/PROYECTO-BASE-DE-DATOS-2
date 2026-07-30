@@ -1,28 +1,99 @@
 #include "query/seq_scan_operator.h"
 
+#include <stdexcept>
+
+#include "storage/table_page.h"
+
 namespace minisgbd {
 
 SeqScanOperator::SeqScanOperator(const std::vector<Tuple> &tuples)
-    : tuples_(tuples) {}
+    : tuples_(&tuples) {}
+
+SeqScanOperator::SeqScanOperator(TableHeap *table_heap)
+    : table_heap_(table_heap) {
+  if (table_heap_ == nullptr) {
+    throw std::invalid_argument(
+        "SeqScanOperator requiere un TableHeap valido.");
+  }
+}
+
+SeqScanOperator::~SeqScanOperator() {
+  Close();
+}
 
 void SeqScanOperator::Open() {
+  if (initialized_) {
+    Close();
+  }
+
   cursor_ = 0;
   initialized_ = true;
+
+  if (table_heap_ != nullptr) {
+    LoadPhysicalPage(table_heap_->GetFirstPageId());
+  }
 }
 
 bool SeqScanOperator::Next(Tuple *tuple) {
-  if (!initialized_ || tuple == nullptr || cursor_ >= tuples_.size()) {
+  if (!initialized_ || tuple == nullptr) {
     return false;
   }
 
-  *tuple = tuples_[cursor_];
-  ++cursor_;
-  return true;
+  if (tuples_ != nullptr) {
+    if (cursor_ >= tuples_->size()) {
+      return false;
+    }
+
+    *tuple = (*tuples_)[cursor_];
+    ++cursor_;
+    return true;
+  }
+
+  while (current_page_ != nullptr) {
+    const auto *table_page =
+        reinterpret_cast<const TablePage *>(current_page_->get_data());
+
+    if (cursor_ < table_page->GetSize()) {
+      const TableRecord record =
+          table_page->GetRecord(static_cast<uint32_t>(cursor_));
+      *tuple = Tuple{record.key, record.value};
+      ++cursor_;
+      return true;
+    }
+
+    const page_id_t next_page_id = table_page->GetNextPageId();
+    table_heap_->GetBufferPool()->UnpinPage(current_page_id_, false);
+    current_page_ = nullptr;
+    current_page_id_ = INVALID_PAGE_ID;
+    cursor_ = 0;
+    LoadPhysicalPage(next_page_id);
+  }
+
+  return false;
 }
 
 void SeqScanOperator::Close() {
+  if (current_page_ != nullptr && table_heap_ != nullptr) {
+    table_heap_->GetBufferPool()->UnpinPage(current_page_id_, false);
+  }
+
+  current_page_ = nullptr;
+  current_page_id_ = INVALID_PAGE_ID;
   initialized_ = false;
   cursor_ = 0;
+}
+
+void SeqScanOperator::LoadPhysicalPage(page_id_t page_id) {
+  if (page_id == INVALID_PAGE_ID) {
+    return;
+  }
+
+  current_page_ = table_heap_->GetBufferPool()->FetchPage(page_id);
+  if (current_page_ == nullptr) {
+    throw std::runtime_error(
+        "SeqScanOperator no pudo cargar una pagina fisica.");
+  }
+  current_page_id_ = page_id;
 }
 
 }  // namespace minisgbd

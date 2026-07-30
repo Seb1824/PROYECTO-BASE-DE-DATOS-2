@@ -9,7 +9,9 @@ include_directories(include)
 
 # 1. Archivos fuente comunes del motor (tus módulos + los de Kari)
 set(ENGINE_SOURCES
+    src/storage/catalog_manager.cpp
     src/storage/disk_manager.cpp
+    src/storage/table_heap.cpp
     src/buffer/car_replacer.cpp
     src/buffer/buffer_pool_manager.cpp
     src/buffer/page.cpp
@@ -38,14 +40,13 @@ add_executable(test_parser
 # 5. Definir las pruebas aisladas del escaneo secuencial
 add_executable(test_seq_scan
     tests/test_seq_scan.cpp
-    src/query/seq_scan_operator.cpp
+    ${ENGINE_SOURCES}
 )
 
 # 6. Definir las pruebas del operador de filtrado
 add_executable(test_filter
     tests/test_filter.cpp
-    src/query/filter_operator.cpp
-    src/query/seq_scan_operator.cpp
+    ${ENGINE_SOURCES}
 )
 
 # 7. Definir las pruebas de integracion del ejecutor de consultas
@@ -75,7 +76,13 @@ add_executable(test_buffer_pool
     src/buffer/page.cpp
 )
 
-# 11. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
+# 11. Definir pruebas de tabla fisica y recuperacion del indice
+add_executable(test_persistence
+    tests/test_persistence.cpp
+    ${ENGINE_SOURCES}
+)
+
+# 12. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
 add_executable(benchmark_load src/benchmark/benchmark_load.cpp ${ENGINE_SOURCES})
 
 # Habilitar pruebas con CTest
@@ -88,3 +95,4 @@ add_test(NAME QueryExecutorTest COMMAND test_query_executor)
 add_test(NAME CliTest COMMAND test_cli)
 add_test(NAME QueryProfilerTest COMMAND test_query_profiler)
 add_test(NAME BufferPoolTest COMMAND test_buffer_pool)
+add_test(NAME PersistenceTest COMMAND test_persistence)

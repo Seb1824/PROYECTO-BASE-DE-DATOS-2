@@ -55,11 +55,26 @@ QueryExecutor::QueryExecutor(std::string table_name,
                              const std::vector<Tuple> &tuples,
                              ExtensibleHashTable *hash_index)
     : table_name_(std::move(table_name)),
-      tuples_(tuples),
+      tuples_(&tuples),
       hash_index_(hash_index) {
   if (table_name_.empty()) {
     throw std::invalid_argument(
         "QueryExecutor requiere un nombre de tabla valido.");
+  }
+}
+
+QueryExecutor::QueryExecutor(std::string table_name, TableHeap *table_heap,
+                             ExtensibleHashTable *hash_index)
+    : table_name_(std::move(table_name)),
+      table_heap_(table_heap),
+      hash_index_(hash_index) {
+  if (table_name_.empty()) {
+    throw std::invalid_argument(
+        "QueryExecutor requiere un nombre de tabla valido.");
+  }
+  if (table_heap_ == nullptr) {
+    throw std::invalid_argument(
+        "QueryExecutor requiere un TableHeap valido.");
   }
 }
 
@@ -75,9 +90,15 @@ std::vector<Tuple> QueryExecutor::Execute(const SelectQuery &query) {
   std::unique_ptr<Operator> source;
   std::unique_ptr<FilterOperator> filter;
   Operator *root = nullptr;
+  auto make_seq_scan = [this]() -> std::unique_ptr<Operator> {
+    if (table_heap_ != nullptr) {
+      return std::make_unique<SeqScanOperator>(table_heap_);
+    }
+    return std::make_unique<SeqScanOperator>(*tuples_);
+  };
 
   if (!query.where.has_value()) {
-    source = std::make_unique<SeqScanOperator>(tuples_);
+    source = make_seq_scan();
     root = source.get();
     last_plan_type_ = QueryPlanType::kSeqScan;
   } else if (hash_index_ != nullptr && IsKeyColumn(query.where->column)) {
@@ -87,7 +108,7 @@ std::vector<Tuple> QueryExecutor::Execute(const SelectQuery &query) {
     last_plan_type_ = QueryPlanType::kIndexScan;
   } else {
     FilterOperator::Predicate predicate = BuildPredicate(*query.where);
-    source = std::make_unique<SeqScanOperator>(tuples_);
+    source = make_seq_scan();
     filter =
         std::make_unique<FilterOperator>(source.get(), std::move(predicate));
     root = filter.get();
