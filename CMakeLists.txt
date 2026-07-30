@@ -66,7 +66,16 @@ add_executable(test_query_profiler
     ${ENGINE_SOURCES}
 )
 
-# 10. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
+# 10. Definir las pruebas de CAR y Buffer Pool
+add_executable(test_buffer_pool
+    tests/test_buffer_pool.cpp
+    src/storage/disk_manager.cpp
+    src/buffer/car_replacer.cpp
+    src/buffer/buffer_pool_manager.cpp
+    src/buffer/page.cpp
+)
+
+# 11. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
 add_executable(benchmark_load src/benchmark/benchmark_load.cpp ${ENGINE_SOURCES})
 
 # Habilitar pruebas con CTest
@@ -78,3 +87,4 @@ add_test(NAME FilterTest COMMAND test_filter)
 add_test(NAME QueryExecutorTest COMMAND test_query_executor)
 add_test(NAME CliTest COMMAND test_cli)
 add_test(NAME QueryProfilerTest COMMAND test_query_profiler)
+add_test(NAME BufferPoolTest COMMAND test_buffer_pool)

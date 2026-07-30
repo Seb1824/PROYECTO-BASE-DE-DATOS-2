@@ -1,5 +1,7 @@
 #include "buffer/buffer_pool_manager.h"
 
+#include <stdexcept>
+
 namespace minisgbd {
 
 BufferPoolManager::BufferPoolManager(size_t pool_size,
@@ -11,12 +13,30 @@ BufferPoolManager::BufferPoolManager(size_t pool_size,
       replacer_(replacer),
       hit_count_(0),
       miss_count_(0) {
+  if (pool_size_ == 0) {
+    delete[] pages_;
+    throw std::invalid_argument(
+        "BufferPoolManager requiere al menos un frame.");
+  }
+  if (disk_manager_ == nullptr || replacer_ == nullptr) {
+    delete[] pages_;
+    throw std::invalid_argument(
+        "BufferPoolManager requiere DiskManager y CARReplacer validos.");
+  }
+
   for (size_t i = 0; i < pool_size_; ++i) {
     free_list_.push_back(static_cast<frame_id_t>(i));
   }
 }
 
-BufferPoolManager::~BufferPoolManager() { delete[] pages_; }
+BufferPoolManager::~BufferPoolManager() {
+  try {
+    FlushAllPages();
+  } catch (...) {
+    // Los destructores no deben propagar excepciones.
+  }
+  delete[] pages_;
+}
 
 bool BufferPoolManager::TryGetFrame(frame_id_t *out_frame_id) {
   if (!free_list_.empty()) {
@@ -80,7 +100,6 @@ Page *BufferPoolManager::FetchPage(page_id_t page_id) {
   page.increment_pin_count();
 
   page_table_[page_id] = frame_id;
-  replacer_->Pin(frame_id);
   replacer_->RecordInsertion(page_id, frame_id);
 
   return &page;
@@ -167,7 +186,6 @@ Page *BufferPoolManager::NewPage(page_id_t *page_id) {
   page.increment_pin_count();
 
   page_table_[new_page_id] = frame_id;
-  replacer_->Pin(frame_id);
   replacer_->RecordInsertion(new_page_id, frame_id);
 
   if (page_id != nullptr) {

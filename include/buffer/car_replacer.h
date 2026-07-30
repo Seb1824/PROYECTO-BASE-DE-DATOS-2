@@ -44,11 +44,9 @@ class CARReplacer {
     page_id_t page_id = INVALID_PAGE_ID;
     bool reference_bit = false;
     bool is_dirty = false;
-    bool evictable = true;
+    bool evictable = false;
     ListTag list = ListTag::kNone;
   };
-
-  frame_id_t Replace();
 
   void PushGhost(std::list<page_id_t> *ghost_list, page_id_t page_id);
 
