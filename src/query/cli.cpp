@@ -45,6 +45,8 @@ const char *PlanName(QueryPlanType plan_type) {
       return "Filter + SeqScan";
     case QueryPlanType::kIndexScan:
       return "IndexScan";
+    case QueryPlanType::kInsert:
+      return "Insert";
   }
 
   return "Desconocido";
@@ -55,12 +57,18 @@ void PrintHelp(std::ostream &output) {
          << "  SELECT * FROM registros;\n"
          << "  SELECT * FROM registros WHERE id = 101;\n"
          << "  SELECT * FROM registros WHERE value = 505;\n"
+         << "  INSERT INTO registros VALUES (106, 530);\n"
          << "  help  Muestra esta ayuda.\n"
          << "  exit  Cierra la CLI.\n";
 }
 
 void PrintResults(std::ostream &output, const ProfiledQueryResult &result) {
-  if (result.rows.empty()) {
+  if (result.plan_type == QueryPlanType::kInsert) {
+    const Tuple &tuple = result.rows.front();
+    output << "Registro insertado: key=" << tuple.key
+           << ", value=" << tuple.value << '\n';
+    output << "Filas afectadas: " << result.rows.size() << '\n';
+  } else if (result.rows.empty()) {
     output << "Sin resultados.\n";
   } else {
     output << std::left << std::setw(12) << "key"
@@ -70,9 +78,9 @@ void PrintResults(std::ostream &output, const ProfiledQueryResult &result) {
     for (const Tuple &tuple : result.rows) {
       output << std::left << std::setw(12) << tuple.key << tuple.value << '\n';
     }
-  }
 
-  output << "Filas: " << result.rows.size() << '\n';
+    output << "Filas: " << result.rows.size() << '\n';
+  }
   output << "Plan: " << PlanName(result.plan_type) << '\n';
   output << std::fixed << std::setprecision(3);
   output << "Tiempo: " << result.metrics.elapsed_ms << " ms\n";

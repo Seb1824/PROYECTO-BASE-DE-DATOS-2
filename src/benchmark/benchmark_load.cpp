@@ -1,169 +1,264 @@
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "buffer/buffer_pool_manager.h"
 #include "buffer/car_replacer.h"
-#include "storage/disk_manager.h"
 #include "index/extensible_hash_table.h"
-#include "index/hash_bucket_page.h"
+#include "query/query_executor.h"
+#include "query/query_profiler.h"
+#include "storage/disk_manager.h"
+#include "storage/table_heap.h"
 
-using namespace minisgbd;
-using Clock = std::chrono::high_resolution_clock;
+namespace {
 
-std::vector<int> GenerateUniqueKeys(int n, unsigned seed) {
-  std::vector<int> keys(n);
+using Clock = std::chrono::steady_clock;
+using minisgbd::BufferPoolManager;
+using minisgbd::CARReplacer;
+using minisgbd::DiskManager;
+using minisgbd::ExtensibleHashTable;
+using minisgbd::ProfiledQueryResult;
+using minisgbd::QueryExecutor;
+using minisgbd::QueryPlanType;
+using minisgbd::QueryProfiler;
+using minisgbd::TableHeap;
+
+struct BenchResult {
+  int n{0};
+  std::string mode;
+  std::string plan;
+  int query_count{0};
+  int rows_found{0};
+  double insert_ms{0.0};
+  double search_ms{0.0};
+  uint64_t hits{0};
+  uint64_t misses{0};
+  double hit_ratio{0.0};
+  uint64_t disk_reads{0};
+  uint64_t disk_writes{0};
+  uint64_t io_operations{0};
+  uintmax_t db_bytes{0};
+};
+
+std::vector<int> GenerateUniqueKeys(int count, unsigned int seed) {
+  std::vector<int> keys(static_cast<std::size_t>(count));
   std::iota(keys.begin(), keys.end(), 0);
   std::shuffle(keys.begin(), keys.end(), std::mt19937(seed));
   return keys;
 }
 
-struct BenchResult {
-  int n;
-  std::string modo;
-  double insert_ms;
-  double search_ms;
-  uint64_t hits;
-  uint64_t misses;
-  double hit_ratio;
-};
+std::vector<int> SelectSearchKeys(const std::vector<int> &keys,
+                                  int requested_count) {
+  const int count =
+      std::min(requested_count, static_cast<int>(keys.size()));
+  std::vector<int> selected;
+  selected.reserve(static_cast<std::size_t>(count));
 
-BenchResult BenchmarkConIndice(int n, const std::vector<int> &keys, size_t pool_size) {
-  const std::string db_file = "bench_con_indice.db";
-  std::remove(db_file.c_str());
+  for (int index = 0; index < count; ++index) {
+    const std::size_t position =
+        static_cast<std::size_t>(index) * keys.size() /
+        static_cast<std::size_t>(count);
+    selected.push_back(keys[position]);
+  }
+  return selected;
+}
+
+double BuildPhysicalDatabase(const std::string &db_file,
+                             const std::vector<int> &keys,
+                             std::size_t pool_size, bool with_index) {
+  std::filesystem::remove(db_file);
 
   DiskManager disk_manager(db_file);
   CARReplacer replacer(pool_size);
   BufferPoolManager bpm(pool_size, &disk_manager, &replacer);
-  ExtensibleHashTable hash_table(&bpm);
-
-  auto t0 = Clock::now();
-  int insertados = 0;
-  for (int k : keys) {
-    if (hash_table.Insert(k, k * 10)) insertados++;
+  TableHeap table_heap(&bpm);
+  std::unique_ptr<ExtensibleHashTable> hash_index;
+  if (with_index) {
+    hash_index = std::make_unique<ExtensibleHashTable>(&bpm);
   }
-  auto t1 = Clock::now();
 
-  int encontrados = 0;
-  int value;
-  for (int k : keys) {
-    if (hash_table.GetValue(k, &value)) encontrados++;
+  const auto start = Clock::now();
+  for (int key : keys) {
+    const int value = key * 10;
+    if (!table_heap.Insert(key, value)) {
+      throw std::runtime_error(
+          "No se pudo cargar un registro en TableHeap.");
+    }
+    if (hash_index != nullptr && !hash_index->Insert(key, value)) {
+      throw std::runtime_error(
+          "No se pudo cargar un registro en el indice.");
+    }
   }
-  auto t2 = Clock::now();
+  bpm.FlushAllPages();
+  const auto end = Clock::now();
 
-  BenchResult r;
-  r.n = n;
-  r.modo = "con_indice";
-  r.insert_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-  r.search_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-  r.hits = bpm.GetHitCount();
-  r.misses = bpm.GetMissCount();
-  r.hit_ratio = bpm.GetHitRatio();
-
-  std::cout << "[con_indice] n=" << n << " insertados=" << insertados
-            << " encontrados=" << encontrados
-            << " insert_ms=" << r.insert_ms
-            << " search_ms=" << r.search_ms << std::endl;
-
-  return r;
+  return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
-BenchResult BenchmarkSinIndice(int n, const std::vector<int> &keys, size_t pool_size) {
-  const std::string db_file = "bench_sin_indice.db";
-  std::remove(db_file.c_str());
+BenchResult RunSearchBenchmark(int n, const std::vector<int> &keys,
+                               int requested_queries,
+                               std::size_t pool_size, bool with_index) {
+  const std::string mode = with_index ? "con_indice" : "sin_indice";
+  const std::string db_file =
+      "benchmark_" + mode + "_" + std::to_string(n) + ".db";
+  const std::vector<int> search_keys =
+      SelectSearchKeys(keys, requested_queries);
 
-  DiskManager disk_manager(db_file);
-  CARReplacer replacer(pool_size);
-  BufferPoolManager bpm(pool_size, &disk_manager, &replacer);
+  BenchResult result;
+  result.n = n;
+  result.mode = mode;
+  result.plan = with_index ? "IndexScan" : "Filter+SeqScan";
+  result.query_count = static_cast<int>(search_keys.size());
+  result.insert_ms =
+      BuildPhysicalDatabase(db_file, keys, pool_size, with_index);
+  result.db_bytes = std::filesystem::file_size(db_file);
 
-  std::vector<page_id_t> heap_pages;
-
-  auto t0 = Clock::now();
-  Page *current_page = nullptr;
-  HashBucketPage *current_bucket = nullptr;
-  page_id_t current_page_id = INVALID_PAGE_ID;
-
-  for (int k : keys) {
-    if (current_bucket == nullptr || current_bucket->IsFull()) {
-      if (current_page != nullptr) {
-        bpm.UnpinPage(current_page_id, true);
-      }
-      current_page = bpm.NewPage(&current_page_id);
-      current_bucket = reinterpret_cast<HashBucketPage *>(current_page->get_data());
-      current_bucket->Init(0);
-      heap_pages.push_back(current_page_id);
+  {
+    DiskManager disk_manager(db_file);
+    CARReplacer replacer(pool_size);
+    BufferPoolManager bpm(pool_size, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
+    std::unique_ptr<ExtensibleHashTable> hash_index;
+    if (with_index) {
+      hash_index = std::make_unique<ExtensibleHashTable>(&bpm);
     }
-    current_bucket->Insert(k, k * 10);
-  }
-  if (current_page != nullptr) {
-    bpm.UnpinPage(current_page_id, true);
-  }
-  auto t1 = Clock::now();
 
-  int encontrados = 0;
-  int value;
-  for (int k : keys) {
-    bool found = false;
-    for (page_id_t pid : heap_pages) {
-      Page *page = bpm.FetchPage(pid);
-      HashBucketPage *bucket = reinterpret_cast<HashBucketPage *>(page->get_data());
-      if (bucket->GetValue(k, &value)) {
-        found = true;
-        bpm.UnpinPage(pid, false);
-        break;
+    QueryExecutor executor("registros", &table_heap, hash_index.get());
+    QueryProfiler profiler(&executor, &bpm, &disk_manager);
+
+    for (int key : search_keys) {
+      const ProfiledQueryResult query_result = profiler.Execute(
+          "SELECT * FROM registros WHERE id = " + std::to_string(key) + ";");
+
+      const QueryPlanType expected_plan =
+          with_index ? QueryPlanType::kIndexScan
+                     : QueryPlanType::kFilteredSeqScan;
+      if (query_result.plan_type != expected_plan) {
+        throw std::runtime_error(
+            "QueryExecutor selecciono un plan inesperado.");
       }
-      bpm.UnpinPage(pid, false);
+      if (query_result.rows.size() != 1 ||
+          query_result.rows.front().key != key) {
+        throw std::runtime_error(
+            "El benchmark no recupero la fila esperada.");
+      }
+
+      ++result.rows_found;
+      result.search_ms += query_result.metrics.elapsed_ms;
+      result.hits += query_result.metrics.buffer_hits;
+      result.misses += query_result.metrics.buffer_misses;
+      result.disk_reads += query_result.metrics.disk_reads;
+      result.disk_writes += query_result.metrics.disk_writes;
+      result.io_operations += query_result.metrics.io_operations;
     }
-    if (found) encontrados++;
   }
-  auto t2 = Clock::now();
 
-  BenchResult r;
-  r.n = n;
-  r.modo = "sin_indice";
-  r.insert_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-  r.search_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-  r.hits = bpm.GetHitCount();
-  r.misses = bpm.GetMissCount();
-  r.hit_ratio = bpm.GetHitRatio();
+  const uint64_t accesses = result.hits + result.misses;
+  if (accesses != 0) {
+    result.hit_ratio =
+        static_cast<double>(result.hits) / static_cast<double>(accesses);
+  }
 
-  std::cout << "[sin_indice] n=" << n << " encontrados=" << encontrados
-            << " insert_ms=" << r.insert_ms
-            << " search_ms=" << r.search_ms << std::endl;
+  std::filesystem::remove(db_file);
 
-  return r;
+  std::cout << '[' << result.mode << "] n=" << result.n
+            << " plan=" << result.plan
+            << " consultas=" << result.query_count
+            << " encontradas=" << result.rows_found
+            << " insert_ms=" << result.insert_ms
+            << " search_ms=" << result.search_ms
+            << " io=" << result.io_operations << '\n';
+  return result;
 }
 
-int main() {
-  std::vector<int> tamanos = {1000, 5000, 10000, 50000, 100000};
-  size_t pool_size = 10;
+std::vector<int> BuildSizes(int maximum_size) {
+  const std::vector<int> standard_sizes = {
+      1000, 5000, 10000, 50000, 100000};
+  std::vector<int> sizes;
 
-  std::ofstream csv("resultados_benchmark.csv");
-  csv << "n,modo,insert_ms,search_ms,hits,misses,hit_ratio\n";
-
-  for (int n : tamanos) {
-    auto keys = GenerateUniqueKeys(n, 42);
-
-    BenchResult r1 = BenchmarkConIndice(n, keys, pool_size);
-    csv << r1.n << "," << r1.modo << "," << r1.insert_ms << ","
-        << r1.search_ms << "," << r1.hits << "," << r1.misses << ","
-        << r1.hit_ratio << "\n";
-
-    BenchResult r2 = BenchmarkSinIndice(n, keys, pool_size);
-    csv << r2.n << "," << r2.modo << "," << r2.insert_ms << ","
-        << r2.search_ms << "," << r2.hits << "," << r2.misses << ","
-        << r2.hit_ratio << "\n";
-
-    std::cout << std::endl;
+  for (int size : standard_sizes) {
+    if (size <= maximum_size) {
+      sizes.push_back(size);
+    }
   }
+  if (sizes.empty() || sizes.back() != maximum_size) {
+    sizes.push_back(maximum_size);
+  }
+  return sizes;
+}
 
-  csv.close();
-  std::cout << "Resultados guardados en resultados_benchmark.csv" << std::endl;
+int ParsePositiveArgument(const char *text, const std::string &name) {
+  try {
+    std::size_t parsed = 0;
+    const int value = std::stoi(text, &parsed);
+    if (parsed != std::string(text).size() || value <= 0) {
+      throw std::invalid_argument("fuera de rango");
+    }
+    return value;
+  } catch (const std::exception &) {
+    throw std::invalid_argument(name + " debe ser un entero positivo.");
+  }
+}
 
-  return 0;
+void WriteResult(std::ofstream &csv, const BenchResult &result) {
+  csv << result.n << ',' << result.mode << ',' << result.plan << ','
+      << result.query_count << ',' << result.rows_found << ','
+      << result.insert_ms << ',' << result.search_ms << ','
+      << result.hits << ',' << result.misses << ','
+      << result.hit_ratio << ',' << result.disk_reads << ','
+      << result.disk_writes << ',' << result.io_operations << ','
+      << result.db_bytes << '\n';
+}
+
+}  // namespace
+
+int main(int argc, char *argv[]) {
+  try {
+    const std::filesystem::path output_path =
+        argc >= 2 ? argv[1] : "docs/resultados_benchmark.csv";
+    const int maximum_size =
+        argc >= 3 ? ParsePositiveArgument(argv[2], "max_n") : 100000;
+    const int requested_queries =
+        argc >= 4 ? ParsePositiveArgument(argv[3], "consultas") : 100;
+    constexpr std::size_t pool_size = 10;
+
+    if (output_path.has_parent_path()) {
+      std::filesystem::create_directories(output_path.parent_path());
+    }
+
+    std::ofstream csv(output_path);
+    if (!csv.is_open()) {
+      throw std::runtime_error(
+          "No se pudo crear el archivo CSV del benchmark.");
+    }
+    csv << std::fixed << std::setprecision(6);
+    csv << "n,modo,plan,queries,rows_found,insert_ms,search_ms,"
+           "hits,misses,hit_ratio,disk_reads,disk_writes,"
+           "io_operations,db_bytes\n";
+
+    for (int n : BuildSizes(maximum_size)) {
+      const std::vector<int> keys = GenerateUniqueKeys(n, 42);
+      WriteResult(csv, RunSearchBenchmark(
+                           n, keys, requested_queries, pool_size, true));
+      WriteResult(csv, RunSearchBenchmark(
+                           n, keys, requested_queries, pool_size, false));
+      csv.flush();
+      std::cout << '\n';
+    }
+
+    std::cout << "Resultados guardados en " << output_path.string() << '\n';
+    return 0;
+  } catch (const std::exception &error) {
+    std::cerr << "[ERROR] " << error.what() << '\n';
+    return 1;
+  }
 }

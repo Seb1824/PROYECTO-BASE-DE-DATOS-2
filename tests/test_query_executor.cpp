@@ -9,6 +9,7 @@
 #include "index/extensible_hash_table.h"
 #include "query/query_executor.h"
 #include "storage/disk_manager.h"
+#include "storage/table_heap.h"
 
 using minisgbd::BufferPoolManager;
 using minisgbd::CARReplacer;
@@ -16,6 +17,7 @@ using minisgbd::DiskManager;
 using minisgbd::ExtensibleHashTable;
 using minisgbd::QueryExecutor;
 using minisgbd::QueryPlanType;
+using minisgbd::TableHeap;
 using minisgbd::Tuple;
 
 namespace {
@@ -139,6 +141,60 @@ void TestIndexPlan() {
   std::remove(db_file.c_str());
 }
 
+void TestPersistentInsert() {
+  const std::string db_file = "test_query_executor_insert.db";
+  std::remove(db_file.c_str());
+
+  {
+    DiskManager disk_manager(db_file);
+    CARReplacer replacer(10);
+    BufferPoolManager bpm(10, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
+    ExtensibleHashTable hash_index(&bpm);
+    QueryExecutor executor("registros", &table_heap, &hash_index);
+
+    const std::vector<Tuple> inserted =
+        executor.Execute("INSERT INTO registros VALUES (106, 530);");
+    Expect(inserted.size() == 1 && inserted[0].key == 106 &&
+               inserted[0].value == 530,
+           "INSERT debe devolver el registro insertado.");
+    Expect(executor.GetLastPlanType() == QueryPlanType::kInsert,
+           "INSERT debe informar el tipo de plan correspondiente.");
+    Expect(table_heap.GetTupleCount() == 1,
+           "INSERT debe escribir una fila en TableHeap.");
+
+    const std::vector<Tuple> selected =
+        executor.Execute("SELECT * FROM registros WHERE id = 106;");
+    Expect(selected.size() == 1 && selected[0].value == 530,
+           "La fila insertada debe recuperarse mediante IndexScan.");
+
+    ExpectInvalidArgument(
+        [&executor]() {
+          executor.Execute("INSERT INTO registros VALUES (106, 999);");
+        },
+        "INSERT debe rechazar claves duplicadas.");
+    Expect(table_heap.GetTupleCount() == 1,
+           "Un duplicado rechazado no debe modificar TableHeap.");
+    bpm.FlushAllPages();
+  }
+
+  {
+    DiskManager disk_manager(db_file);
+    CARReplacer replacer(10);
+    BufferPoolManager bpm(10, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
+    ExtensibleHashTable hash_index(&bpm);
+    QueryExecutor executor("registros", &table_heap, &hash_index);
+
+    const std::vector<Tuple> selected =
+        executor.Execute("SELECT * FROM registros WHERE key = 106;");
+    Expect(selected.size() == 1 && selected[0].value == 530,
+           "INSERT debe permanecer disponible despues de reiniciar.");
+  }
+
+  std::remove(db_file.c_str());
+}
+
 void TestInvalidQueries() {
   const std::vector<Tuple> tuples = BuildTuples();
   QueryExecutor executor("registros", tuples);
@@ -162,6 +218,12 @@ void TestInvalidQueries() {
       "Debe propagar errores de sintaxis del parser.");
 
   ExpectInvalidArgument(
+      [&executor]() {
+        executor.Execute("INSERT INTO registros VALUES (5, 500);");
+      },
+      "INSERT debe rechazar un ejecutor basado solo en memoria.");
+
+  ExpectInvalidArgument(
       [&tuples]() {
         QueryExecutor executor("", tuples);
       },
@@ -176,6 +238,7 @@ int main() {
   TestSequentialPlan();
   TestFilteredSequentialPlan();
   TestIndexPlan();
+  TestPersistentInsert();
   TestInvalidQueries();
 
   if (failures != 0) {

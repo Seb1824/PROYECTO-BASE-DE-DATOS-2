@@ -85,6 +85,12 @@ add_executable(test_persistence
 # 12. Definir el Ejecutable de Benchmark (comparación con índice / sin índice)
 add_executable(benchmark_load src/benchmark/benchmark_load.cpp ${ENGINE_SOURCES})
 
+# 13. Pruebas extendidas de splits, reinicio, limites y catalogo
+add_executable(test_index_stress
+    tests/test_index_stress.cpp
+    ${ENGINE_SOURCES}
+)
+
 # Habilitar pruebas con CTest
 enable_testing()
 add_test(NAME HashIndexTest COMMAND test_hash)
@@ -96,3 +102,4 @@ add_test(NAME CliTest COMMAND test_cli)
 add_test(NAME QueryProfilerTest COMMAND test_query_profiler)
 add_test(NAME BufferPoolTest COMMAND test_buffer_pool)
 add_test(NAME PersistenceTest COMMAND test_persistence)
+add_test(NAME IndexStressTest COMMAND test_index_stress)

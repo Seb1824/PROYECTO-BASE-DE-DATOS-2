@@ -6,6 +6,8 @@
 #include "query/parser.h"
 
 using minisgbd::Parser;
+using minisgbd::InsertQuery;
+using minisgbd::QueryStatement;
 using minisgbd::SelectQuery;
 
 namespace {
@@ -21,8 +23,8 @@ void Expect(bool condition, const std::string &message) {
 
 void ExpectInvalid(const std::string &sql) {
   try {
-    Parser::Parse(sql);
-    Expect(false, "La consulta debio ser rechazada: " + sql);
+    Parser::ParseStatement(sql);
+    Expect(false, "La sentencia debio ser rechazada: " + sql);
   } catch (const std::invalid_argument &) {
     // Resultado esperado.
   } catch (const std::exception &error) {
@@ -67,6 +69,36 @@ void TestCaseWhitespaceAndSignedValue() {
   }
 }
 
+void TestInsert() {
+  QueryStatement statement =
+      Parser::ParseStatement("INSERT INTO registros VALUES (106, 530);");
+
+  Expect(std::holds_alternative<InsertQuery>(statement),
+         "Debe reconocer una sentencia INSERT.");
+  if (std::holds_alternative<InsertQuery>(statement)) {
+    const InsertQuery &query = std::get<InsertQuery>(statement);
+    Expect(query.table == "registros",
+           "INSERT debe reconocer el nombre de la tabla.");
+    Expect(query.key == 106, "INSERT debe reconocer la clave.");
+    Expect(query.value == 530, "INSERT debe reconocer el valor.");
+  }
+}
+
+void TestInsertCaseWhitespaceAndSignedValues() {
+  QueryStatement statement = Parser::ParseStatement(
+      "  insert into Inventario values ( -7 , +25 )  ");
+
+  Expect(std::holds_alternative<InsertQuery>(statement),
+         "Debe aceptar INSERT sin importar mayusculas y espacios.");
+  if (std::holds_alternative<InsertQuery>(statement)) {
+    const InsertQuery &query = std::get<InsertQuery>(statement);
+    Expect(query.table == "Inventario",
+           "INSERT debe conservar el nombre original de la tabla.");
+    Expect(query.key == -7 && query.value == 25,
+           "INSERT debe aceptar enteros con signo.");
+  }
+}
+
 void TestInvalidQueries() {
   const std::vector<std::string> invalid_queries = {
       "",
@@ -78,7 +110,14 @@ void TestInvalidQueries() {
       "SELECT * FROM registros WHERE id = texto;",
       "SELECT * FROM registros WHERE id > 10;",
       "SELECT * FROM registros; contenido_extra",
-      "SELECT * FROM registros WHERE id = 999999999999999999999999;"};
+      "SELECT * FROM registros WHERE id = 999999999999999999999999;",
+      "INSERT registros VALUES (1, 10);",
+      "INSERT INTO registros (1, 10);",
+      "INSERT INTO registros VALUES 1, 10;",
+      "INSERT INTO registros VALUES (1);",
+      "INSERT INTO registros VALUES (1, texto);",
+      "INSERT INTO registros VALUES (1, 10, 20);",
+      "INSERT INTO registros VALUES (999999999999999999999, 10);"};
 
   for (const std::string &sql : invalid_queries) {
     ExpectInvalid(sql);
@@ -88,11 +127,13 @@ void TestInvalidQueries() {
 }  // namespace
 
 int main() {
-  std::cout << "=== PRUEBAS DEL PARSER SELECT/WHERE ===\n";
+  std::cout << "=== PRUEBAS DEL PARSER SELECT/WHERE/INSERT ===\n";
 
   TestSelectWithoutWhere();
   TestSelectWithWhere();
   TestCaseWhitespaceAndSignedValue();
+  TestInsert();
+  TestInsertCaseWhitespaceAndSignedValues();
   TestInvalidQueries();
 
   if (failures != 0) {

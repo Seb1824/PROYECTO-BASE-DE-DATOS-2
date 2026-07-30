@@ -14,21 +14,21 @@ El flujo principal del sistema es:
 SQL
  |
  v
-Parser -> SelectQuery -> QueryExecutor
-                           |
-              +------------+-------------+
-              |                          |
-              v                          v
-        IndexScanOperator       FilterOperator
+Parser -> SelectQuery/InsertQuery -> QueryExecutor
+                                      |
+                         +------------+-------------+
+                         |            |             |
+                         v            v             v
+                   IndexScan    Filter + SeqScan   INSERT
+                                                   |
+                                                   v
+                                          TableHeap + indice
                                       |
                                       v
-                               SeqScanOperator
-                           |
-                           v
-                     QueryProfiler
-                           |
-                           v
-                Resultados + tiempo + Buffer/I/O
+                                QueryProfiler
+                                      |
+                                      v
+                           Resultados + tiempo + Buffer/I/O
 ```
 
 El indice utiliza la siguiente ruta de almacenamiento:
@@ -55,11 +55,12 @@ Funcionalidades implementadas:
 11. Recuperacion de tabla e indice al reabrir el archivo `.db`.
 12. Contrato comun de operadores Volcano: `Open()`, `Next()` y `Close()`.
 13. Operadores `IndexScanOperator`, `SeqScanOperator` y `FilterOperator`.
-14. Parser basico para sentencias `SELECT` con condicion `WHERE`.
+14. Parser para sentencias `SELECT`, `WHERE` e `INSERT`.
 15. `QueryExecutor` con seleccion de plan indexado o secuencial.
-16. CLI interactiva para ejecutar consultas SQL.
-17. Profiler por consulta con tiempo, Buffer hits/misses, hit ratio e I/O.
-18. Benchmark de busqueda con indice frente a escaneo secuencial.
+16. Inserciones persistentes y control de claves duplicadas.
+17. CLI interactiva para ejecutar consultas SQL.
+18. Profiler por consulta con tiempo, Buffer hits/misses, hit ratio e I/O.
+19. Benchmark fisico de `IndexScan` frente a `Filter + SeqScan`.
 
 ## SQL soportado
 
@@ -71,6 +72,7 @@ SELECT * FROM registros WHERE id = 103;
 SELECT * FROM registros WHERE key = 103;
 SELECT * FROM registros WHERE value = 515;
 SELECT * FROM registros WHERE valor = 515;
+INSERT INTO registros VALUES (106, 530);
 ```
 
 Las palabras clave SQL no distinguen mayusculas de minusculas. Las
@@ -84,6 +86,11 @@ Seleccion de plan:
 | `WHERE key/id = N` con indice | `IndexScan` |
 | `WHERE key/id = N` sin indice | `Filter + SeqScan` |
 | `WHERE value/valor = N` | `Filter + SeqScan` |
+| `INSERT INTO registros VALUES (K, V)` | `Insert` |
+
+Las claves son unicas. Un `INSERT` duplicado se rechaza antes de modificar
+`TableHeap`; los registros aceptados se guardan tanto en las paginas fisicas
+de la tabla como en el indice persistente.
 
 ## CLI y profiler
 
@@ -106,6 +113,15 @@ Hit ratio: 100.00 %
 Lecturas de disco: 0
 Escrituras de disco: 0
 Costo I/O: 0 operaciones de pagina
+```
+
+Ejemplo de carga desde la misma CLI:
+
+```text
+mini-sgbd> INSERT INTO registros VALUES (106, 530);
+Registro insertado: key=106, value=530
+Filas afectadas: 1
+Plan: Insert
 ```
 
 Comandos adicionales:
@@ -163,7 +179,9 @@ PROYECTO-BASE-DE-DATOS-2/
 |   |-- test_query_executor.cpp
 |   |-- test_cli.cpp
 |   |-- test_query_profiler.cpp
-|   `-- test_buffer_pool.cpp
+|   |-- test_buffer_pool.cpp
+|   |-- test_persistence.cpp
+|   `-- test_index_stress.cpp
 |-- docs/
 `-- data/
 ```
@@ -194,7 +212,7 @@ PROYECTO-BASE-DE-DATOS-2/
 
 ### Procesamiento de consultas
 
-- `Parser`: transforma SQL en `SelectQuery`.
+- `Parser`: transforma SQL en `SelectQuery` o `InsertQuery`.
 - `Operator`: interfaz comun del Modelo Volcano.
 - `IndexScanOperator`: busqueda puntual mediante el indice hash.
 - `SeqScanOperator`: recorre directamente las paginas de `TableHeap` mediante
@@ -202,6 +220,8 @@ PROYECTO-BASE-DE-DATOS-2/
   pruebas unitarias aisladas.
 - `FilterOperator`: aplica un predicado a otro operador Volcano.
 - `QueryExecutor`: crea el plan y recolecta los resultados.
+- Para `INSERT`, `QueryExecutor` actualiza el `TableHeap` fisico y el indice
+  hash persistente.
 - `QueryProfiler`: mide tiempo, Buffer hits/misses e I/O por consulta.
 - `RunCli`: mantiene la sesion interactiva y presenta resultados/metricas.
 
@@ -250,6 +270,7 @@ Suites registradas:
 - `QueryProfilerTest`
 - `BufferPoolTest`
 - `PersistenceTest`
+- `IndexStressTest`
 
 `BufferPoolTest` valida especificamente:
 
@@ -259,12 +280,33 @@ Suites registradas:
 - Las paginas sucias se escriben al ser expulsadas.
 - El destructor sincroniza las paginas sucias restantes.
 
+`IndexStressTest` valida 5,000 claves, varios splits consecutivos, reinicio,
+duplicados, claves inexistentes, el limite fisico del directorio y el rechazo
+de catalogos invalidos o incompletos.
+
 ## Benchmark
 
-`benchmark_load` compara busqueda mediante `ExtensibleHashTable` contra
-escaneo secuencial para diferentes cantidades de registros. El ejecutable
-genera `resultados_benchmark.csv` en su directorio de trabajo. En `docs/` se
-mantienen resultados y una grafica de referencia:
+`benchmark_load` crea bases fisicas independientes y las vuelve a abrir antes
+de medir. Todas las busquedas pasan por `QueryExecutor` y `QueryProfiler`:
+con indice usa `IndexScan`; sin indice usa `Filter + SeqScan` sobre
+`TableHeap`. El CSV incluye tiempo, hits, misses, hit ratio, lecturas,
+escrituras, costo total de I/O y tamano del archivo.
+
+Ejecucion completa:
+
+```powershell
+.\build\Debug\benchmark_load.exe
+python .\docs\plot_benchmark.py
+```
+
+Para una ejecucion corta de validacion se pueden indicar archivo de salida,
+tamano maximo y numero de consultas:
+
+```powershell
+.\build\Debug\benchmark_load.exe .\build\benchmark_smoke.csv 1000 10
+```
+
+Los artefactos de referencia se mantienen en:
 
 ```text
 docs/resultados_benchmark.csv
@@ -277,12 +319,12 @@ docs/comparacion_busqueda.png
 - El catalogo administra actualmente una sola tabla y un solo indice.
 - `TableHeap` es append-only: faltan borrado, actualizacion, reutilizacion de
   espacio y una lista de paginas libres.
-- El parser solo soporta `SELECT *` e igualdad con enteros.
-- No existen todavia `INSERT`, `UPDATE`, `DELETE`, joins ni proyecciones.
-- Falta ampliar las pruebas del indice para cubrir splits masivos,
-  profundidad maxima y recuperacion ante archivos danados.
-- El directorio hash necesita limites explicitos antes de alcanzar la
-  capacidad maxima de una pagina.
+- El parser soporta `SELECT *`, igualdad con enteros e `INSERT` de dos
+  enteros; no existen todavia `UPDATE`, `DELETE`, joins ni proyecciones.
+- El directorio hash ocupa una sola pagina y detiene su crecimiento al llegar
+  a la profundidad global maxima representable.
+- Las escrituras de tabla e indice aun no cuentan con recuperacion
+  transaccional ante una falla ocurrida entre ambas operaciones.
 
 ## Resumen
 

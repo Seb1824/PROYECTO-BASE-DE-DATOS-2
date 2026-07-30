@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <variant>
 
 namespace minisgbd {
 
@@ -15,5 +16,13 @@ struct SelectQuery {
   bool select_all{true};
   std::optional<Condition> where;
 };
+
+struct InsertQuery {
+  std::string table;
+  int key{0};
+  int value{0};
+};
+
+using QueryStatement = std::variant<SelectQuery, InsertQuery>;
 
 }  // namespace minisgbd

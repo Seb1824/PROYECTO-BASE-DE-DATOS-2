@@ -1,17 +1,28 @@
+#include <cstdio>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "buffer/buffer_pool_manager.h"
+#include "buffer/car_replacer.h"
+#include "index/extensible_hash_table.h"
 #include "query/cli.h"
 #include "query/query_executor.h"
 #include "query/query_profiler.h"
 #include "query/tuple.h"
+#include "storage/disk_manager.h"
+#include "storage/table_heap.h"
 
+using minisgbd::BufferPoolManager;
+using minisgbd::CARReplacer;
+using minisgbd::DiskManager;
+using minisgbd::ExtensibleHashTable;
 using minisgbd::QueryExecutor;
 using minisgbd::QueryProfiler;
 using minisgbd::RunCli;
+using minisgbd::TableHeap;
 using minisgbd::Tuple;
 
 namespace {
@@ -76,8 +87,63 @@ void TestInteractiveSession() {
                  "Una consulta invalida debe mostrar un error.");
   ExpectContains(session, "Comandos disponibles:",
                  "El comando help debe mostrar ayuda.");
+  ExpectContains(session, "INSERT INTO registros VALUES",
+                 "La ayuda debe documentar INSERT.");
   ExpectContains(session, "Sesion finalizada.",
                  "El comando exit debe cerrar la sesion.");
+}
+
+void TestPersistentInsertSession() {
+  const std::string db_file = "test_cli_insert.db";
+  std::remove(db_file.c_str());
+
+  {
+    DiskManager disk_manager(db_file);
+    CARReplacer replacer(10);
+    BufferPoolManager bpm(10, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
+    ExtensibleHashTable hash_index(&bpm);
+    QueryExecutor executor("registros", &table_heap, &hash_index);
+    QueryProfiler profiler(&executor, &bpm, &disk_manager);
+
+    std::istringstream input(
+        "INSERT INTO registros VALUES (106, 530);\n"
+        "SELECT * FROM registros WHERE id = 106;\n"
+        "INSERT INTO registros VALUES (106, 999);\n"
+        "exit\n");
+    std::ostringstream output;
+
+    Expect(RunCli(input, output, &profiler) == 0,
+           "La sesion con INSERT debe finalizar correctamente.");
+    const std::string session = output.str();
+    ExpectContains(session, "Registro insertado: key=106, value=530",
+                   "La CLI debe confirmar el registro insertado.");
+    ExpectContains(session, "Plan: Insert",
+                   "La CLI debe informar el plan de insercion.");
+    ExpectContains(session, "Plan: IndexScan",
+                   "La fila insertada debe consultarse por el indice.");
+    ExpectContains(session, "ya existe",
+                   "La CLI debe explicar el rechazo de un duplicado.");
+    Expect(table_heap.GetTupleCount() == 1,
+           "El duplicado no debe agregar otra fila fisica.");
+    bpm.FlushAllPages();
+  }
+
+  {
+    DiskManager disk_manager(db_file);
+    CARReplacer replacer(10);
+    BufferPoolManager bpm(10, &disk_manager, &replacer);
+    TableHeap table_heap(&bpm);
+    ExtensibleHashTable hash_index(&bpm);
+    QueryExecutor executor("registros", &table_heap, &hash_index);
+
+    const std::vector<Tuple> rows =
+        executor.Execute("SELECT * FROM registros WHERE id = 106;");
+    Expect(rows.size() == 1 && rows[0].value == 530,
+           "El INSERT de la CLI debe persistir despues de reiniciar.");
+  }
+
+  std::remove(db_file.c_str());
 }
 
 void TestEndOfInput() {
@@ -109,6 +175,7 @@ int main() {
   std::cout << "=== PRUEBAS DE CLI ===\n";
 
   TestInteractiveSession();
+  TestPersistentInsertSession();
   TestEndOfInput();
   TestNullExecutor();
 

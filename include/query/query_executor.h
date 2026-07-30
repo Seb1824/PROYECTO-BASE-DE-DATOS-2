@@ -14,6 +14,7 @@ enum class QueryPlanType {
   kSeqScan,
   kFilteredSeqScan,
   kIndexScan,
+  kInsert,
 };
 
 class QueryExecutor {
@@ -25,6 +26,7 @@ class QueryExecutor {
 
   std::vector<Tuple> Execute(const std::string &sql);
   std::vector<Tuple> Execute(const SelectQuery &query);
+  std::vector<Tuple> Execute(const InsertQuery &query);
 
   QueryPlanType GetLastPlanType() const;
 

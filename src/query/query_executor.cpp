@@ -79,7 +79,11 @@ QueryExecutor::QueryExecutor(std::string table_name, TableHeap *table_heap,
 }
 
 std::vector<Tuple> QueryExecutor::Execute(const std::string &sql) {
-  return Execute(Parser::Parse(sql));
+  QueryStatement statement = Parser::ParseStatement(sql);
+  if (std::holds_alternative<SelectQuery>(statement)) {
+    return Execute(std::get<SelectQuery>(statement));
+  }
+  return Execute(std::get<InsertQuery>(statement));
 }
 
 std::vector<Tuple> QueryExecutor::Execute(const SelectQuery &query) {
@@ -130,6 +134,34 @@ std::vector<Tuple> QueryExecutor::Execute(const SelectQuery &query) {
 
   root->Close();
   return results;
+}
+
+std::vector<Tuple> QueryExecutor::Execute(const InsertQuery &query) {
+  if (ToLower(query.table) != ToLower(table_name_)) {
+    throw std::invalid_argument("Tabla desconocida: " + query.table);
+  }
+  if (table_heap_ == nullptr || hash_index_ == nullptr) {
+    throw std::invalid_argument(
+        "INSERT requiere una tabla fisica y un indice persistente.");
+  }
+
+  int existing_value = 0;
+  if (hash_index_->GetValue(query.key, &existing_value)) {
+    throw std::invalid_argument("La clave " + std::to_string(query.key) +
+                                " ya existe.");
+  }
+
+  if (!table_heap_->Insert(query.key, query.value)) {
+    throw std::runtime_error(
+        "No se pudo insertar el registro en la tabla fisica.");
+  }
+  if (!hash_index_->Insert(query.key, query.value)) {
+    throw std::runtime_error(
+        "La tabla fue actualizada, pero no se pudo actualizar el indice.");
+  }
+
+  last_plan_type_ = QueryPlanType::kInsert;
+  return {Tuple{query.key, query.value}};
 }
 
 QueryPlanType QueryExecutor::GetLastPlanType() const {
